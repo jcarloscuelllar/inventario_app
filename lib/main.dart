@@ -9,11 +9,19 @@ void main() {
 
 class Product {
   final String clave;
+  final String codbar;
   final String descripcion;
+  final String marca;
+  final String unidad;
+  final String existencia;
 
   Product({
     required this.clave,
+    required this.codbar,
     required this.descripcion,
+    required this.marca,
+    required this.unidad,
+    required this.existencia,
   });
 
   /// Quita ceros a la izquierda: 001234 → 1234
@@ -52,6 +60,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
   bool searchByClave = false;
   String message = '';
 
+  int totalArticulos = 0; // 👈 TOTAL A INVENTARIAR
+
   Future<void> importCSV() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
@@ -66,11 +76,16 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
     List<Product> products = [];
 
+    // 👇 Se salta el encabezado
     for (int i = 1; i < rows.length; i++) {
       products.add(
         Product(
           clave: rows[i][0].toString(),
-          descripcion: rows[i][1].toString(),
+          codbar: rows[i][1].toString(),
+          descripcion: rows[i][2].toString(),
+          marca: rows[i][3].toString(),
+          unidad: rows[i][4].toString(),
+          existencia: rows[i][5].toString(),
         ),
       );
     }
@@ -79,6 +94,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
       allProducts = products;
       filteredProducts = products;
       selectedRows.clear();
+      totalArticulos = products.length; // 👈 CONTEO REAL
       message = '';
     });
   }
@@ -131,7 +147,22 @@ class _InventoryScreenState extends State<InventoryScreen> {
               onPressed: importCSV,
               child: const Text('Importar Inventario'),
             ),
+
+            // 👇 LABEL DE TOTAL
+            if (totalArticulos > 0)
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  'Artículos a inventariar: $totalArticulos',
+                  style: const TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+
             const SizedBox(height: 16),
+
             Row(
               children: [
                 Expanded(
@@ -165,20 +196,28 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 ),
               ],
             ),
+
             const SizedBox(height: 16),
+
             if (message.isNotEmpty)
               Text(
                 message,
                 style: const TextStyle(color: Colors.red),
               ),
+
             const SizedBox(height: 8),
+
             Expanded(
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
                 child: DataTable(
                   columns: const [
                     DataColumn(label: Text('Clave')),
+                    DataColumn(label: Text('Código de Barras')),
                     DataColumn(label: Text('Descripción')),
+                    DataColumn(label: Text('Marca')),
+                    DataColumn(label: Text('Unidad')),
+                    DataColumn(label: Text('Existencia')),
                   ],
                   rows: List.generate(filteredProducts.length, (index) {
                     final product = filteredProducts[index];
@@ -200,7 +239,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       },
                       cells: [
                         DataCell(Text(product.clave)),
+                        DataCell(Text(product.codbar)),
                         DataCell(Text(product.descripcion)),
+                        DataCell(Text(product.marca)),
+                        DataCell(Text(product.unidad)),
+                        DataCell(Text(product.existencia)),
                       ],
                     );
                   }),
