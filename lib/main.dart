@@ -8,16 +8,20 @@ void main() {
   runApp(const MyApp());
 }
 
-/* =========================
-   MODELO PRODUCTO
-========================= */
+/* =======================
+   MODELO DE PRODUCTO
+======================= */
 class Product {
   final String clave;
   final String codbar;
   final String descripcion;
   final String marca;
   final String unidad;
-  String existencia;
+
+  int existencia;         // sistema
+  int existenciaFisica;   // conteo
+  int sobrante;
+  int faltante;
 
   Product({
     required this.clave,
@@ -26,20 +30,21 @@ class Product {
     required this.marca,
     required this.unidad,
     required this.existencia,
+    this.existenciaFisica = 0,
+    this.sobrante = 0,
+    this.faltante = 0,
   });
 
-  String get claveNormalizada {
-    return clave.replaceFirst(RegExp(r'^0+'), '');
-  }
-
-  List<String> toCsvRow() {
-    return [clave, codbar, descripcion, marca, unidad, existencia];
+  void recalcular() {
+    final diff = existenciaFisica - existencia;
+    sobrante = diff > 0 ? diff : 0;
+    faltante = diff < 0 ? diff.abs() : 0;
   }
 }
 
-/* =========================
+/* =======================
    APP
-========================= */
+======================= */
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
@@ -53,9 +58,9 @@ class MyApp extends StatelessWidget {
   }
 }
 
-/* =========================
+/* =======================
    INVENTARIO
-========================= */
+======================= */
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
 
@@ -64,132 +69,93 @@ class InventoryScreen extends StatefulWidget {
 }
 
 class _InventoryScreenState extends State<InventoryScreen> {
-  List<Product> allProducts = [];
-  File? csvFile;
-
+  List<Product> products = [];
+  bool isScanning = false;
   int totalArticulos = 0;
+  String message = '';
 
-  /* ---------- IMPORTAR CSV ---------- */
+  /* =======================
+     IMPORTAR CSV
+  ======================= */
   Future<void> importCSV() async {
     final result = await FilePicker.platform.pickFiles(
       type: FileType.custom,
       allowedExtensions: ['csv'],
     );
-
     if (result == null) return;
 
-    csvFile = File(result.files.single.path!);
-    final content = await csvFile!.readAsString();
+    final file = File(result.files.single.path!);
+    final content = await file.readAsString();
     final rows = const CsvToListConverter().convert(content);
 
-    List<Product> products = [];
+    final List<Product> loaded = [];
 
     for (int i = 1; i < rows.length; i++) {
-      products.add(
+      loaded.add(
         Product(
           clave: rows[i][0].toString(),
-          codbar: rows[i][1].toString(), // 👈 SEGUNDA COLUMNA
+          codbar: rows[i][1].toString(),
           descripcion: rows[i][2].toString(),
           marca: rows[i][3].toString(),
           unidad: rows[i][4].toString(),
-          existencia: rows[i][5].toString(),
+          existencia: int.tryParse(rows[i][5].toString()) ?? 0,
         ),
       );
     }
 
     setState(() {
-      allProducts = products;
-      totalArticulos = products.length;
+      products = loaded;
+      totalArticulos = loaded.length;
+      message = '';
     });
   }
 
-  /* ---------- BUSCAR POR CODBAR ---------- */
-  Product? buscarPorCodbar(String code) {
-    try {
-      return allProducts.firstWhere((p) => p.codbar == code);
-    } catch (_) {
-      return null;
+  /* =======================
+     ESCANEO
+  ======================= */
+  void onBarcodeDetected(String code) {
+    if (isScanning) return;
+    isScanning = true;
+
+    final product = products.firstWhere(
+      (p) => p.codbar == code,
+      orElse: () => Product(
+        clave: '',
+        codbar: '',
+        descripcion: '',
+        marca: '',
+        unidad: '',
+        existencia: 0,
+      ),
+    );
+
+    if (product.clave.isEmpty) {
+      setState(() {
+        message = 'Producto no encontrado';
+        isScanning = false;
+      });
+      return;
     }
-  }
 
-  /* ---------- GUARDAR CSV ---------- */
-  Future<void> guardarCSV() async {
-    if (csvFile == null) return;
-
-    List<List<String>> rows = [
-      ['clave', 'codbar', 'descripcion', 'marca', 'unidad', 'existencia'],
-      ...allProducts.map((p) => p.toCsvRow()),
-    ];
-
-    final csv = const ListToCsvConverter().convert(rows);
-    await csvFile!.writeAsString(csv);
-  }
-
-  /* ---------- ABRIR SCANNER ---------- */
-  void abrirScanner() {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ScannerPage(
-          onDetect: (code) async {
-            final producto = buscarPorCodbar(code);
-
-            if (producto != null) {
-              final cantidad = await Navigator.push<int>(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => ConteoPage(product: producto),
-                ),
-              );
-
-              if (cantidad != null) {
-                setState(() {
-                  producto.existencia = cantidad.toString();
-                });
-                await guardarCSV();
-              }
-            } else {
-              final agregar = await showDialog<bool>(
-                context: context,
-                builder: (_) => AlertDialog(
-                  title: const Text('No encontrado'),
-                  content: Text('¿Deseas agregar el código $code?'),
-                  actions: [
-                    TextButton(
-                      onPressed: () => Navigator.pop(context, false),
-                      child: const Text('No'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => Navigator.pop(context, true),
-                      child: const Text('Sí'),
-                    ),
-                  ],
-                ),
-              );
-
-              if (agregar == true) {
-                setState(() {
-                  allProducts.add(
-                    Product(
-                      clave: '',
-                      codbar: code,
-                      descripcion: 'NUEVO PRODUCTO',
-                      marca: '',
-                      unidad: '',
-                      existencia: '0',
-                    ),
-                  );
-                  totalArticulos = allProducts.length;
-                });
-                await guardarCSV();
-              }
-            }
-          },
-        ),
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => ConteoDialog(
+        product: product,
+        onSave: (cantidad) {
+          setState(() {
+            product.existenciaFisica += cantidad;
+            product.recalcular();
+            isScanning = false;
+          });
+        },
       ),
     );
   }
 
+  /* =======================
+     UI
+  ======================= */
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -202,19 +168,63 @@ class _InventoryScreenState extends State<InventoryScreen> {
               onPressed: importCSV,
               child: const Text('Importar Inventario'),
             ),
-
+            ElevatedButton.icon(
+              icon: const Icon(Icons.qr_code_scanner),
+              label: const Text('Escanear código'),
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => ScannerScreen(
+                      onDetect: onBarcodeDetected,
+                    ),
+                  ),
+                );
+              },
+            ),
             if (totalArticulos > 0)
               Text(
                 'Artículos a inventariar: $totalArticulos',
                 style: const TextStyle(fontWeight: FontWeight.bold),
               ),
+            const SizedBox(height: 8),
+            if (message.isNotEmpty)
+              Text(message, style: const TextStyle(color: Colors.red)),
+            const SizedBox(height: 8),
 
-            const SizedBox(height: 20),
-
-            ElevatedButton.icon(
-              icon: const Icon(Icons.qr_code_scanner),
-              label: const Text('Escanear código'),
-              onPressed: abrirScanner,
+            /* =======================
+               TABLA
+            ======================= */
+            Expanded(
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Clave')),
+                    DataColumn(label: Text('Código')),
+                    DataColumn(label: Text('Descripción')),
+                    DataColumn(label: Text('Marca')),
+                    DataColumn(label: Text('Unidad')),
+                    DataColumn(label: Text('Existencia')),
+                    DataColumn(label: Text('Exist. Física')),
+                    DataColumn(label: Text('Sobrante')),
+                    DataColumn(label: Text('Faltante')),
+                  ],
+                  rows: products.map((p) {
+                    return DataRow(cells: [
+                      DataCell(Text(p.clave)),
+                      DataCell(Text(p.codbar)),
+                      DataCell(Text(p.descripcion)),
+                      DataCell(Text(p.marca)),
+                      DataCell(Text(p.unidad)),
+                      DataCell(Text(p.existencia.toString())),
+                      DataCell(Text(p.existenciaFisica.toString())),
+                      DataCell(Text(p.sobrante.toString())),
+                      DataCell(Text(p.faltante.toString())),
+                    ]);
+                  }).toList(),
+                ),
+              ),
             ),
           ],
         ),
@@ -223,122 +233,102 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 }
 
-/* =========================
-   SCANNER (CON BLOQUEO)
-========================= */
-class ScannerPage extends StatefulWidget {
+/* =======================
+   SCANNER
+======================= */
+class ScannerScreen extends StatelessWidget {
   final Function(String) onDetect;
-  const ScannerPage({super.key, required this.onDetect});
 
-  @override
-  State<ScannerPage> createState() => _ScannerPageState();
-}
-
-class _ScannerPageState extends State<ScannerPage> {
-  bool _procesando = false;
+  const ScannerScreen({super.key, required this.onDetect});
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Escanear')),
       body: MobileScanner(
-        onDetect: (capture) {
-          if (_procesando) return;
-
-          final code = capture.barcodes.first.rawValue;
-          if (code == null) return;
-
-          _procesando = true;
-
-          widget.onDetect(code);
-
-          Navigator.pop(context);
+        onDetect: (barcode, args) {
+          final code = barcode.rawValue;
+          if (code != null) {
+            onDetect(code);
+            Navigator.pop(context);
+          }
         },
       ),
     );
   }
 }
 
-/* =========================
-   CONTEO
-========================= */
-class ConteoPage extends StatefulWidget {
+/* =======================
+   DIALOGO DE CONTEO
+======================= */
+class ConteoDialog extends StatefulWidget {
   final Product product;
-  const ConteoPage({super.key, required this.product});
+  final Function(int) onSave;
+
+  const ConteoDialog({
+    super.key,
+    required this.product,
+    required this.onSave,
+  });
 
   @override
-  State<ConteoPage> createState() => _ConteoPageState();
+  State<ConteoDialog> createState() => _ConteoDialogState();
 }
 
-class _ConteoPageState extends State<ConteoPage> {
-  late TextEditingController _controller;
-  int cantidad = 0;
+class _ConteoDialogState extends State<ConteoDialog> {
+  final TextEditingController controller = TextEditingController();
+  String area = 'Bodega';
 
-  @override
-  void initState() {
-    super.initState();
-    cantidad = int.tryParse(widget.product.existencia) ?? 0;
-    _controller = TextEditingController(text: cantidad.toString());
-  }
-
-  void sync() {
-    cantidad = int.tryParse(_controller.text) ?? cantidad;
-  }
+  final areas = [
+    'Bodega',
+    'Piso de venta',
+    'Marbete',
+    'Vitrina',
+    'Exhibición',
+    'Entregas',
+    'Remate',
+    'Cajas',
+  ];
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(widget.product.descripcion)),
-      body: Padding(
-        padding: const EdgeInsets.all(24),
-        child: Column(
-          children: [
-            TextField(
-              controller: _controller,
-              keyboardType: TextInputType.number,
-              onChanged: (_) => sync(),
-              decoration: const InputDecoration(
-                labelText: 'Cantidad',
-                border: OutlineInputBorder(),
-              ),
-            ),
-            const SizedBox(height: 20),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                IconButton(
-                  icon: const Icon(Icons.remove, size: 40),
-                  onPressed: () {
-                    if (cantidad > 0) {
-                      setState(() {
-                        cantidad--;
-                        _controller.text = cantidad.toString();
-                      });
-                    }
-                  },
-                ),
-                const SizedBox(width: 30),
-                IconButton(
-                  icon: const Icon(Icons.add, size: 40),
-                  onPressed: () {
-                    setState(() {
-                      cantidad++;
-                      _controller.text = cantidad.toString();
-                    });
-                  },
-                ),
-              ],
-            ),
-            const SizedBox(height: 40),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.pop(context, cantidad);
-              },
-              child: const Text('Guardar conteo'),
-            ),
-          ],
-        ),
+    return AlertDialog(
+      title: const Text('Conteo'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(widget.product.descripcion),
+          const SizedBox(height: 8),
+          DropdownButtonFormField<String>(
+            value: area,
+            items: areas
+                .map((a) => DropdownMenuItem(value: a, child: Text(a)))
+                .toList(),
+            onChanged: (v) => area = v!,
+            decoration: const InputDecoration(labelText: 'Área'),
+          ),
+          TextField(
+            controller: controller,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Cantidad'),
+          ),
+        ],
       ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancelar'),
+        ),
+        ElevatedButton(
+          onPressed: () {
+            final qty = int.tryParse(controller.text) ?? 0;
+            widget.onSave(qty);
+            Navigator.pop(context);
+          },
+          child: const Text('Guardar'),
+        ),
+      ],
     );
   }
 }
