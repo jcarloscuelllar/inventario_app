@@ -18,8 +18,8 @@ class Product {
   final String marca;
   final String unidad;
 
-  int existencia;         // sistema
-  int existenciaFisica;   // conteo
+  int existencia;         // inventario teórico
+  int existenciaFisica;   // conteo real
   int sobrante;
   int faltante;
 
@@ -50,10 +50,9 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
+    return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Inventario',
-      home: const InventoryScreen(),
+      home: InventoryScreen(),
     );
   }
 }
@@ -183,11 +182,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
               },
             ),
             if (totalArticulos > 0)
-              Text(
-                'Artículos a inventariar: $totalArticulos',
-                style: const TextStyle(fontWeight: FontWeight.bold),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'Artículos a inventariar: $totalArticulos',
+                  style: const TextStyle(fontWeight: FontWeight.bold),
+                ),
               ),
-            const SizedBox(height: 8),
             if (message.isNotEmpty)
               Text(message, style: const TextStyle(color: Colors.red)),
             const SizedBox(height: 8),
@@ -234,7 +235,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
 }
 
 /* =======================
-   SCANNER
+   SCANNER (FIX mobile_scanner v5)
 ======================= */
 class ScannerScreen extends StatelessWidget {
   final Function(String) onDetect;
@@ -246,9 +247,12 @@ class ScannerScreen extends StatelessWidget {
     return Scaffold(
       appBar: AppBar(title: const Text('Escanear')),
       body: MobileScanner(
-        onDetect: (barcode, args) {
-          final code = barcode.rawValue;
-          if (code != null) {
+        onDetect: (BarcodeCapture capture) {
+          if (capture.barcodes.isEmpty) return;
+
+          final String? code = capture.barcodes.first.rawValue;
+
+          if (code != null && code.isNotEmpty) {
             onDetect(code);
             Navigator.pop(context);
           }
