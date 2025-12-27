@@ -9,7 +9,7 @@ void main() {
 }
 
 /* =======================
-   MODELO DE PRODUCTO
+   MODELO
 ======================= */
 class Product {
   final String clave;
@@ -18,8 +18,8 @@ class Product {
   final String marca;
   final String unidad;
 
-  int existencia;         // inventario teórico
-  int existenciaFisica;   // conteo real
+  int existencia;       // sistema
+  int existenciaFisica; // conteo
   int sobrante;
   int faltante;
 
@@ -34,6 +34,9 @@ class Product {
     this.sobrante = 0,
     this.faltante = 0,
   });
+
+  String get claveNormalizada =>
+      clave.replaceFirst(RegExp(r'^0+'), '');
 
   void recalcular() {
     final diff = existenciaFisica - existencia;
@@ -68,10 +71,15 @@ class InventoryScreen extends StatefulWidget {
 }
 
 class _InventoryScreenState extends State<InventoryScreen> {
-  List<Product> products = [];
+  List<Product> allProducts = [];
+  List<Product> filteredProducts = [];
+
   bool isScanning = false;
-  int totalArticulos = 0;
+  bool searchByClave = false;
+
+  String searchText = '';
   String message = '';
+  int totalArticulos = 0;
 
   /* =======================
      IMPORTAR CSV
@@ -103,10 +111,49 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
 
     setState(() {
-      products = loaded;
+      allProducts = loaded;
+      filteredProducts = loaded;
       totalArticulos = loaded.length;
       message = '';
     });
+  }
+
+  /* =======================
+     BUSQUEDA
+  ======================= */
+  void search() {
+    if (searchText.isEmpty) {
+      setState(() {
+        filteredProducts = allProducts;
+        message = '';
+      });
+      return;
+    }
+
+    if (searchByClave) {
+      final claveBuscada =
+          searchText.replaceFirst(RegExp(r'^0+'), '');
+
+      final results = allProducts.where((p) {
+        return p.claveNormalizada == claveBuscada;
+      }).toList();
+
+      setState(() {
+        filteredProducts = results;
+        message = results.isEmpty ? 'No se encontró el producto' : '';
+      });
+    } else {
+      final results = allProducts.where((p) {
+        return p.descripcion
+            .toLowerCase()
+            .contains(searchText.toLowerCase());
+      }).toList();
+
+      setState(() {
+        filteredProducts = results;
+        message = results.isEmpty ? 'No se encontró el producto' : '';
+      });
+    }
   }
 
   /* =======================
@@ -116,7 +163,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     if (isScanning) return;
     isScanning = true;
 
-    final product = products.firstWhere(
+    final product = allProducts.firstWhere(
       (p) => p.codbar == code,
       orElse: () => Product(
         clave: '',
@@ -167,6 +214,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
               onPressed: importCSV,
               child: const Text('Importar Inventario'),
             ),
+
             ElevatedButton.icon(
               icon: const Icon(Icons.qr_code_scanner),
               label: const Text('Escanear código'),
@@ -174,13 +222,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
                 Navigator.push(
                   context,
                   MaterialPageRoute(
-                    builder: (_) => ScannerScreen(
-                      onDetect: onBarcodeDetected,
-                    ),
+                    builder: (_) =>
+                        ScannerScreen(onDetect: onBarcodeDetected),
                   ),
                 );
               },
             ),
+
             if (totalArticulos > 0)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 8),
@@ -189,13 +237,50 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   style: const TextStyle(fontWeight: FontWeight.bold),
                 ),
               ),
+
+            /* ===== BUSCADOR ===== */
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    decoration: const InputDecoration(
+                      labelText: 'Buscar',
+                      border: OutlineInputBorder(),
+                    ),
+                    onChanged: (v) => searchText = v,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Column(
+                  children: [
+                    const Text('Buscar por clave'),
+                    Switch(
+                      value: searchByClave,
+                      onChanged: (v) {
+                        setState(() => searchByClave = v);
+                      },
+                    ),
+                  ],
+                ),
+                IconButton(
+                  icon: const Icon(Icons.search),
+                  onPressed: search,
+                ),
+              ],
+            ),
+
             if (message.isNotEmpty)
-              Text(message, style: const TextStyle(color: Colors.red)),
+              Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: Text(
+                  message,
+                  style: const TextStyle(color: Colors.red),
+                ),
+              ),
+
             const SizedBox(height: 8),
 
-            /* =======================
-               TABLA
-            ======================= */
+            /* ===== TABLA ===== */
             Expanded(
               child: SingleChildScrollView(
                 scrollDirection: Axis.horizontal,
@@ -211,7 +296,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                     DataColumn(label: Text('Sobrante')),
                     DataColumn(label: Text('Faltante')),
                   ],
-                  rows: products.map((p) {
+                  rows: filteredProducts.map((p) {
                     return DataRow(cells: [
                       DataCell(Text(p.clave)),
                       DataCell(Text(p.codbar)),
@@ -235,27 +320,45 @@ class _InventoryScreenState extends State<InventoryScreen> {
 }
 
 /* =======================
-   SCANNER (FIX mobile_scanner v5)
+   SCANNER
 ======================= */
-class ScannerScreen extends StatelessWidget {
+class ScannerScreen extends StatefulWidget {
   final Function(String) onDetect;
 
   const ScannerScreen({super.key, required this.onDetect});
+
+  @override
+  State<ScannerScreen> createState() => _ScannerScreenState();
+}
+
+class _ScannerScreenState extends State<ScannerScreen> {
+  final MobileScannerController controller = MobileScannerController();
+  bool detected = false;
+
+  @override
+  void dispose() {
+    controller.dispose();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('Escanear')),
       body: MobileScanner(
-        onDetect: (BarcodeCapture capture) {
-          if (capture.barcodes.isEmpty) return;
+        controller: controller,
+        onDetect: (BarcodeCapture capture) async {
+          if (detected) return;
 
-          final String? code = capture.barcodes.first.rawValue;
+          final code = capture.barcodes.first.rawValue;
+          if (code == null || code.isEmpty) return;
 
-          if (code != null && code.isNotEmpty) {
-            onDetect(code);
-            Navigator.pop(context);
-          }
+          detected = true;
+          await controller.stop();
+
+          widget.onDetect(code);
+
+          if (mounted) Navigator.pop(context);
         },
       ),
     );
@@ -263,7 +366,7 @@ class ScannerScreen extends StatelessWidget {
 }
 
 /* =======================
-   DIALOGO DE CONTEO
+   DIALOGO CONTEO
 ======================= */
 class ConteoDialog extends StatefulWidget {
   final Product product;
@@ -307,7 +410,8 @@ class _ConteoDialogState extends State<ConteoDialog> {
           DropdownButtonFormField<String>(
             value: area,
             items: areas
-                .map((a) => DropdownMenuItem(value: a, child: Text(a)))
+                .map((a) =>
+                    DropdownMenuItem(value: a, child: Text(a)))
                 .toList(),
             onChanged: (v) => area = v!,
             decoration: const InputDecoration(labelText: 'Área'),
