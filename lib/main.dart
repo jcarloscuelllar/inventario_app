@@ -38,10 +38,14 @@ class DbHelper {
     });
   }
 
+  static Future<void> insertProduct(Map<String, dynamic> product) async {
+    final database = await db;
+    await database.insert('products', product, conflictAlgorithm: ConflictAlgorithm.replace);
+  }
+
   static Future<void> insertBatch(List<List<dynamic>> rows) async {
     final database = await db;
     Batch batch = database.batch();
-    // Limpiar tabla previa si se desea una importación limpia
     batch.delete('products');
     
     for (var i = 1; i < rows.length; i++) {
@@ -67,18 +71,17 @@ class DbHelper {
     );
   }
 
-  static Future<List<Map<String, dynamic>>> search(String query, bool byClave) async {
+  static Future<List<Map<String, dynamic>>> search(String query) async {
     final database = await db;
     if (query.isEmpty) return await database.query('products', limit: 100);
     
-    if (byClave) {
-      // Normalización simple: buscar coincidencias que contengan la clave
-      return await database.query('products', 
-        where: 'clave LIKE ?', whereArgs: ['%$query%'], limit: 100);
-    } else {
-      return await database.query('products', 
-        where: 'descripcion LIKE ?', whereArgs: ['%$query%'], limit: 100);
-    }
+    // Búsqueda reactiva en todos los campos solicitados
+    return await database.query(
+      'products',
+      where: 'descripcion LIKE ? OR clave LIKE ? OR codbar LIKE ? OR marca LIKE ?',
+      whereArgs: ['%$query%', '%$query%', '%$query%', '%$query%'],
+      limit: 100
+    );
   }
 
   static Future<List<Map<String, dynamic>>> getAllForExport() async {
@@ -95,6 +98,7 @@ class MyApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      debugShowCheckedModeBanner: false,
       theme: ThemeData(useMaterial3: true, colorSchemeSeed: Colors.green),
       home: const InventoryScreen(),
     );
@@ -110,7 +114,6 @@ class InventoryScreen extends StatefulWidget {
 class _InventoryScreenState extends State<InventoryScreen> {
   List<Map<String, dynamic>> displayedProducts = [];
   final TextEditingController _searchController = TextEditingController();
-  bool searchByClave = false;
   bool isLoading = false;
 
   @override
@@ -120,61 +123,60 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   void _refreshList() async {
-    final data = await DbHelper.search(_searchController.text, searchByClave);
-    setState(() => displayedProducts = data);
-  }
-
-  /* ACCIONES */
-  Future<void> _importCSV() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
-    if (result == null) return;
-
-    setState(() => isLoading = true);
-    final file = File(result.files.single.path!);
-    final content = await file.readAsString();
-    final rows = const CsvToListConverter().convert(content);
-    
-    await DbHelper.insertBatch(rows);
-    setState(() => isLoading = false);
-    _refreshList();
-  }
-
-  Future<void> _exportCSV() async {
-    final data = await DbHelper.getAllForExport();
-    List<List<dynamic>> csvData = [
-      ['Clave', 'Código', 'Descripción', 'Existencia', 'Física', 'Sobrante', 'Faltante']
-    ];
-
-    for (var p in data) {
-      int ext = p['existencia'];
-      int fis = p['fisica'];
-      int diff = fis - ext;
-      csvData.add([
-        p['clave'], p['codbar'], p['descripcion'], ext, fis,
-        diff > 0 ? diff : 0, diff < 0 ? diff.abs() : 0
-      ]);
-    }
-
-    String csvString = const ListToCsvConverter().convert(csvData);
-    final directory = await getTemporaryDirectory();
-    final path = "${directory.path}/inventario_final.csv";
-    final file = File(path);
-    await file.writeAsString(csvString);
-
-    await Share.shareXFiles([XFile(path)], text: 'Reporte de Inventario');
+    final data = await DbHelper.search(_searchController.text);
+    if (mounted) setState(() => displayedProducts = data);
   }
 
   void _onScan() async {
-    final code = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const ScannerScreen()));
-    if (code != null) {
+    final code = await Navigator.push<String>(
+      context, 
+      MaterialPageRoute(builder: (_) => const ScannerScreen())
+    );
+
+    // Verificamos que el código no sea nulo y esperamos un momento para evitar conflictos de navegación
+    if (code != null && mounted) {
+      await Future.delayed(const Duration(milliseconds: 400));
+      
       final database = await DbHelper.db;
-      final res = await database.query('products', where: 'codbar = ?', whereArgs: [code]);
+      final res = await database.query('products', 
+        where: 'codbar = ? OR clave = ?', 
+        whereArgs: [code, code]
+      );
+
       if (res.isNotEmpty) {
         _showConteoDialog(res.first);
       } else {
-        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Código no registrado')));
+        _showNotFoundDialog(code);
       }
     }
+  }
+
+  void _showNotFoundDialog(String code) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("No encontrado"),
+        content: Text("El código '$code' no existe en la base de datos. ¿Deseas registrarlo como un nuevo producto?"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          ElevatedButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _goToAddProduct(code);
+            }, 
+            child: const Text("Registrar")
+          )
+        ],
+      )
+    );
+  }
+
+  void _goToAddProduct([String? initialCode]) async {
+    await Navigator.push(
+      context, 
+      MaterialPageRoute(builder: (_) => AddProductScreen(initialCode: initialCode))
+    );
+    _refreshList();
   }
 
   void _showConteoDialog(Map<String, dynamic> product) {
@@ -183,18 +185,23 @@ class _InventoryScreenState extends State<InventoryScreen> {
       context: context,
       builder: (_) => AlertDialog(
         title: Text(product['descripcion']),
+        subtitle: Text("Marca: ${product['marca']} | Clave: ${product['clave']}"),
         content: TextField(
           controller: controller,
           keyboardType: TextInputType.number,
           autofocus: true,
-          decoration: const InputDecoration(labelText: 'Cantidad física encontrada'),
+          decoration: const InputDecoration(
+            labelText: 'Cantidad física encontrada',
+            border: OutlineInputBorder()
+          ),
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
           ElevatedButton(
             onPressed: () async {
-              await DbHelper.updateFisica(product['clave'], int.tryParse(controller.text) ?? 0);
-              Navigator.pop(context);
+              int cant = int.tryParse(controller.text) ?? 0;
+              await DbHelper.updateFisica(product['clave'], cant);
+              if (mounted) Navigator.pop(context);
               _refreshList();
             }, 
             child: const Text('Sumar')
@@ -204,14 +211,46 @@ class _InventoryScreenState extends State<InventoryScreen> {
     );
   }
 
+  /* IMPORT/EXPORT */
+  Future<void> _importCSV() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
+    if (result == null) return;
+    setState(() => isLoading = true);
+    try {
+      final file = File(result.files.single.path!);
+      final content = await file.readAsString();
+      final rows = const CsvToListConverter().convert(content);
+      await DbHelper.insertBatch(rows);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error al importar: $e")));
+    }
+    setState(() => isLoading = false);
+    _refreshList();
+  }
+
+  Future<void> _exportCSV() async {
+    final data = await DbHelper.getAllForExport();
+    List<List<dynamic>> csvData = [['Clave', 'Código', 'Descripción', 'Marca', 'Existencia', 'Física', 'Diferencia']];
+    for (var p in data) {
+      csvData.add([p['clave'], p['codbar'], p['descripcion'], p['marca'], p['existencia'], p['fisica'], p['fisica'] - p['existencia']]);
+    }
+    String csvString = const ListToCsvConverter().convert(csvData);
+    final directory = await getTemporaryDirectory();
+    final path = "${directory.path}/inventario_final.csv";
+    final file = File(path);
+    await file.writeAsString(csvString);
+    await Share.shareXFiles([XFile(path)], text: 'Reporte de Inventario');
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Inventario SQLite (80k)'),
+        title: const Text('Mi Inventario'),
         actions: [
-          IconButton(icon: const Icon(Icons.download), onPressed: _exportCSV),
+          IconButton(icon: const Icon(Icons.add_box), onPressed: () => _goToAddProduct()),
           IconButton(icon: const Icon(Icons.upload_file), onPressed: _importCSV),
+          IconButton(icon: const Icon(Icons.download), onPressed: _exportCSV),
         ],
       ),
       body: Column(
@@ -223,16 +262,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
               controller: _searchController,
               onChanged: (_) => _refreshList(),
               decoration: InputDecoration(
-                hintText: 'Buscar por ${searchByClave ? "clave" : "descripción"}...',
+                hintText: 'Buscar (Clave, Barra, Marca o Descr)...',
                 prefixIcon: const Icon(Icons.search),
-                suffixIcon: IconButton(
-                  icon: Icon(searchByClave ? Icons.vpn_key : Icons.abc),
-                  onPressed: () => setState(() {
-                    searchByClave = !searchByClave;
-                    _refreshList();
-                  }),
-                ),
-                border: const OutlineInputBorder(),
+                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                filled: true,
+                fillColor: Colors.grey[100]
               ),
             ),
           ),
@@ -241,27 +275,113 @@ class _InventoryScreenState extends State<InventoryScreen> {
               itemCount: displayedProducts.length,
               itemBuilder: (context, i) {
                 final p = displayedProducts[i];
-                return ListTile(
-                  title: Text(p['descripcion']),
-                  subtitle: Text("Clave: ${p['clave']} | Sistema: ${p['existencia']}"),
-                  trailing: Text("${p['fisica']}", style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.blue)),
-                  onTap: () => _showConteoDialog(p),
+                return Card(
+                  margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  child: ListTile(
+                    title: Text(p['descripcion'], style: const TextStyle(fontWeight: FontWeight.bold)),
+                    subtitle: Text("Marca: ${p['marca']} | Clave: ${p['clave']}"),
+                    trailing: Text("${p['fisica']}", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.blue)),
+                    onTap: () => _showConteoDialog(p),
+                  ),
                 );
               },
             ),
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton(
+      floatingActionButton: FloatingActionButton.extended(
         onPressed: _onScan,
-        child: const Icon(Icons.qr_code_scanner),
+        label: const Text("Escanear"),
+        icon: const Icon(Icons.qr_code_scanner),
       ),
     );
   }
 }
 
 /* =======================
-   SCANNER SCREEN (Igual a la anterior con dispose)
+   CRUD: AGREGAR PRODUCTO
+======================= */
+class AddProductScreen extends StatefulWidget {
+  final String? initialCode;
+  const AddProductScreen({super.key, this.initialCode});
+
+  @override
+  State<AddProductScreen> createState() => _AddProductScreenState();
+}
+
+class _AddProductScreenState extends State<AddProductScreen> {
+  final _formKey = GlobalKey<FormState>();
+  final _claveCtrl = TextEditingController();
+  final _barCtrl = TextEditingController();
+  final _descCtrl = TextEditingController();
+  final _marcaCtrl = TextEditingController();
+  final _stockCtrl = TextEditingController(text: "0");
+
+  @override
+  void initState() {
+    super.initState();
+    if (widget.initialCode != null) {
+      _barCtrl.text = widget.initialCode!;
+      _claveCtrl.text = widget.initialCode!;
+    }
+  }
+
+  void _save() async {
+    if (_formKey.currentState!.validate()) {
+      await DbHelper.insertProduct({
+        'clave': _claveCtrl.text,
+        'codbar': _barCtrl.text,
+        'descripcion': _descCtrl.text,
+        'marca': _marcaCtrl.text,
+        'unidad': 'PZ',
+        'existencia': int.tryParse(_stockCtrl.text) ?? 0,
+        'fisica': 0
+      });
+      if (mounted) Navigator.pop(context);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text("Nuevo Producto"),
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back), // Flecha para regresar solicitada
+          onPressed: () => Navigator.pop(context),
+        ),
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Form(
+          key: _formKey,
+          child: ListView(
+            children: [
+              TextFormField(controller: _claveCtrl, decoration: const InputDecoration(labelText: "Clave *"), validator: (v) => v!.isEmpty ? "Campo obligatorio" : null),
+              const SizedBox(height: 10),
+              TextFormField(controller: _barCtrl, decoration: const InputDecoration(labelText: "Código de Barras")),
+              const SizedBox(height: 10),
+              TextFormField(controller: _descCtrl, decoration: const InputDecoration(labelText: "Descripción *"), validator: (v) => v!.isEmpty ? "Campo obligatorio" : null),
+              const SizedBox(height: 10),
+              TextFormField(controller: _marcaCtrl, decoration: const InputDecoration(labelText: "Marca")),
+              const SizedBox(height: 10),
+              TextFormField(controller: _stockCtrl, decoration: const InputDecoration(labelText: "Stock en Sistema"), keyboardType: TextInputType.number),
+              const SizedBox(height: 30),
+              ElevatedButton(
+                onPressed: _save,
+                style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50)),
+                child: const Text("GUARDAR E IR ATRÁS"),
+              )
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/* =======================
+   SCANNER SCREEN CORREGIDA
 ======================= */
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
@@ -271,16 +391,27 @@ class ScannerScreen extends StatefulWidget {
 
 class _ScannerScreenState extends State<ScannerScreen> {
   final controller = MobileScannerController();
+  bool isDetected = false; // Flag para evitar múltiples cierres/detecciones
+
   @override
-  void dispose() { controller.dispose(); super.dispose(); }
+  void dispose() { 
+    controller.dispose(); 
+    super.dispose(); 
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      appBar: AppBar(title: const Text("Escaneando Código")),
       body: MobileScanner(
         controller: controller,
         onDetect: (cap) {
+          if (isDetected) return; // Si ya detectamos uno, ignoramos el resto de ráfagas
           final code = cap.barcodes.first.rawValue;
-          if (code != null) Navigator.pop(context, code);
+          if (code != null) {
+            isDetected = true;
+            Navigator.pop(context, code);
+          }
         },
       ),
     );
