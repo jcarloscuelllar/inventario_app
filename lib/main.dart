@@ -75,7 +75,6 @@ class DbHelper {
     final database = await db;
     if (query.isEmpty) return await database.query('products', limit: 100);
     
-    // Búsqueda reactiva en todos los campos solicitados
     return await database.query(
       'products',
       where: 'descripcion LIKE ? OR clave LIKE ? OR codbar LIKE ? OR marca LIKE ?',
@@ -133,7 +132,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
       MaterialPageRoute(builder: (_) => const ScannerScreen())
     );
 
-    // Verificamos que el código no sea nulo y esperamos un momento para evitar conflictos de navegación
     if (code != null && mounted) {
       await Future.delayed(const Duration(milliseconds: 400));
       
@@ -156,7 +154,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
       context: context,
       builder: (ctx) => AlertDialog(
         title: const Text("No encontrado"),
-        content: Text("El código '$code' no existe en la base de datos. ¿Deseas registrarlo como un nuevo producto?"),
+        content: Text("El código '$code' no existe en la base de datos. ¿Deseas registrarlo?"),
         actions: [
           TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
           ElevatedButton(
@@ -179,21 +177,32 @@ class _InventoryScreenState extends State<InventoryScreen> {
     _refreshList();
   }
 
+  // CORRECCIÓN AQUÍ: Se eliminó 'subtitle' y se usó 'content' con Column
   void _showConteoDialog(Map<String, dynamic> product) {
     final controller = TextEditingController();
     showDialog(
       context: context,
       builder: (_) => AlertDialog(
         title: Text(product['descripcion']),
-        subtitle: Text("Marca: ${product['marca']} | Clave: ${product['clave']}"),
-        content: TextField(
-          controller: controller,
-          keyboardType: TextInputType.number,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Cantidad física encontrada',
-            border: OutlineInputBorder()
-          ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              "Marca: ${product['marca']} | Clave: ${product['clave']}",
+              style: const TextStyle(fontSize: 14, color: Colors.grey),
+            ),
+            const SizedBox(height: 15),
+            TextField(
+              controller: controller,
+              keyboardType: TextInputType.number,
+              autofocus: true,
+              decoration: const InputDecoration(
+                labelText: 'Cantidad física encontrada',
+                border: OutlineInputBorder()
+              ),
+            ),
+          ],
         ),
         actions: [
           TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
@@ -211,7 +220,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
     );
   }
 
-  /* IMPORT/EXPORT */
   Future<void> _importCSV() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
     if (result == null) return;
@@ -222,7 +230,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
       final rows = const CsvToListConverter().convert(content);
       await DbHelper.insertBatch(rows);
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error al importar: $e")));
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
     }
     setState(() => isLoading = false);
     _refreshList();
@@ -236,7 +244,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
     String csvString = const ListToCsvConverter().convert(csvData);
     final directory = await getTemporaryDirectory();
-    final path = "${directory.path}/inventario_final.csv";
+    final path = "${directory.path}/inventario_export.csv";
     final file = File(path);
     await file.writeAsString(csvString);
     await Share.shareXFiles([XFile(path)], text: 'Reporte de Inventario');
@@ -304,7 +312,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
 class AddProductScreen extends StatefulWidget {
   final String? initialCode;
   const AddProductScreen({super.key, this.initialCode});
-
   @override
   State<AddProductScreen> createState() => _AddProductScreenState();
 }
@@ -347,7 +354,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
       appBar: AppBar(
         title: const Text("Nuevo Producto"),
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back), // Flecha para regresar solicitada
+          icon: const Icon(Icons.arrow_back),
           onPressed: () => Navigator.pop(context),
         ),
       ),
@@ -357,11 +364,11 @@ class _AddProductScreenState extends State<AddProductScreen> {
           key: _formKey,
           child: ListView(
             children: [
-              TextFormField(controller: _claveCtrl, decoration: const InputDecoration(labelText: "Clave *"), validator: (v) => v!.isEmpty ? "Campo obligatorio" : null),
+              TextFormField(controller: _claveCtrl, decoration: const InputDecoration(labelText: "Clave *"), validator: (v) => v!.isEmpty ? "Requerido" : null),
               const SizedBox(height: 10),
               TextFormField(controller: _barCtrl, decoration: const InputDecoration(labelText: "Código de Barras")),
               const SizedBox(height: 10),
-              TextFormField(controller: _descCtrl, decoration: const InputDecoration(labelText: "Descripción *"), validator: (v) => v!.isEmpty ? "Campo obligatorio" : null),
+              TextFormField(controller: _descCtrl, decoration: const InputDecoration(labelText: "Descripción *"), validator: (v) => v!.isEmpty ? "Requerido" : null),
               const SizedBox(height: 10),
               TextFormField(controller: _marcaCtrl, decoration: const InputDecoration(labelText: "Marca")),
               const SizedBox(height: 10),
@@ -381,7 +388,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
 }
 
 /* =======================
-   SCANNER SCREEN CORREGIDA
+   SCANNER SCREEN
 ======================= */
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
@@ -391,7 +398,7 @@ class ScannerScreen extends StatefulWidget {
 
 class _ScannerScreenState extends State<ScannerScreen> {
   final controller = MobileScannerController();
-  bool isDetected = false; // Flag para evitar múltiples cierres/detecciones
+  bool isDetected = false;
 
   @override
   void dispose() { 
@@ -406,7 +413,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
       body: MobileScanner(
         controller: controller,
         onDetect: (cap) {
-          if (isDetected) return; // Si ya detectamos uno, ignoramos el resto de ráfagas
+          if (isDetected) return;
           final code = cap.barcodes.first.rawValue;
           if (code != null) {
             isDetected = true;
