@@ -54,8 +54,8 @@ class DbHelper {
         'clave': rows[i][0].toString(),
         'codbar': rows[i][1].toString(),
         'descripcion': rows[i][2].toString(),
-        'marca': rows[i][3].toString(),
-        'unidad': rows[i][4].toString(),
+        'unidad': rows[i][3].toString(),
+        'marca': rows[i][4].toString(),
         'existencia': int.tryParse(rows[i][5].toString()) ?? 0,
         'fisica': 0
       }, conflictAlgorithm: ConflictAlgorithm.replace);
@@ -238,9 +238,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   Future<void> _exportCSV() async {
     final data = await DbHelper.getAllForExport();
-    List<List<dynamic>> csvData = [['Clave', 'Código', 'Descripción', 'Marca', 'Existencia', 'Física', 'Diferencia']];
+    List<List<dynamic>> csvData = [['Clave', 'Código', 'Descripción','Unidad', 'Marca', 'Existencia', 'Física', 'Diferencia']];
     for (var p in data) {
-      csvData.add([p['clave'], p['codbar'], p['descripcion'], p['marca'], p['existencia'], p['fisica'], p['fisica'] - p['existencia']]);
+      csvData.add([p['clave'], p['codbar'], p['descripcion'],p['unidad'], p['marca'], p['existencia'], p['fisica'], p['fisica'] - p['existencia']]);
     }
     String csvString = const ListToCsvConverter().convert(csvData);
     final directory = await getTemporaryDirectory();
@@ -254,7 +254,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Mi Inventario'),
+        title: const Text('Inventario'),
         actions: [
           IconButton(icon: const Icon(Icons.add_box), onPressed: () => _goToAddProduct()),
           IconButton(icon: const Icon(Icons.upload_file), onPressed: _importCSV),
@@ -287,7 +287,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   child: ListTile(
                     title: Text(p['descripcion'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text("Marca: ${p['marca']} | Clave: ${p['clave']}"),
+                    subtitle: Text("Clave: ${p['clave']} | Unidad: ${p['unidad']} | Marca: ${p['marca']} | Stock: ${p['existencia']}"),
                     trailing: Text("${p['fisica']}", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.blue)),
                     onTap: () => _showConteoDialog(p),
                   ),
