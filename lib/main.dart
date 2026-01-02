@@ -115,10 +115,37 @@ class _InventoryScreenState extends State<InventoryScreen> {
   final TextEditingController _searchController = TextEditingController();
   bool isLoading = false;
 
+  // Variables para los contadores
+  int totalItems = 0;
+  int itemsContados = 0;
+
   @override
   void initState() {
     super.initState();
     _refreshList();
+    _updateCounters();
+  }
+
+  // Función para actualizar los contadores superiores
+  void _updateCounters() async {
+    final database = await DbHelper.db;
+    
+    // Contar total de productos
+    final total = Sqflite.firstIntValue(
+      await database.rawQuery('SELECT COUNT(*) FROM products')
+    ) ?? 0;
+
+    // Contar productos donde ya se capturó algo en física (fisica > 0)
+    final contados = Sqflite.firstIntValue(
+      await database.rawQuery('SELECT COUNT(*) FROM products WHERE fisica > 0')
+    ) ?? 0;
+
+    if (mounted) {
+      setState(() {
+        totalItems = total;
+        itemsContados = contados;
+      });
+    }
   }
 
   void _refreshList() async {
@@ -175,9 +202,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
       MaterialPageRoute(builder: (_) => AddProductScreen(initialCode: initialCode))
     );
     _refreshList();
+    _updateCounters(); // Actualizar contador al volver de agregar
   }
 
-  // CORRECCIÓN AQUÍ: Se eliminó 'subtitle' y se usó 'content' con Column
   void _showConteoDialog(Map<String, dynamic> product) {
     final controller = TextEditingController();
     showDialog(
@@ -212,6 +239,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
               await DbHelper.updateFisica(product['clave'], cant);
               if (mounted) Navigator.pop(context);
               _refreshList();
+              _updateCounters(); // Actualizar contador al sumar cantidad
             }, 
             child: const Text('Sumar')
           ),
@@ -234,6 +262,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
     setState(() => isLoading = false);
     _refreshList();
+    _updateCounters(); // Actualizar contador al importar CSV
   }
 
   Future<void> _exportCSV() async {
@@ -254,7 +283,17 @@ class _InventoryScreenState extends State<InventoryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Inventario'),
+        // Título dinámico con contadores
+        title: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text('Inventario', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
+            Text(
+              'Total: $totalItems | Contados: $itemsContados',
+              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
+            ),
+          ],
+        ),
         actions: [
           IconButton(icon: const Icon(Icons.add_box), onPressed: () => _goToAddProduct()),
           IconButton(icon: const Icon(Icons.upload_file), onPressed: _importCSV),
