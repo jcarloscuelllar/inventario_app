@@ -24,7 +24,7 @@ class DbHelper {
 
   static Future<Database> _initDb() async {
     String path = p.join(await getDatabasesPath(), 'inventory.db');
-    return await openDatabase(path, version: 2, // Subimos versión para aplicar cambios
+    return await openDatabase(path, version: 2, 
         onCreate: (db, version) async {
       await db.execute('''
         CREATE TABLE products (
@@ -62,7 +62,7 @@ class DbHelper {
     final database = await db;
     Batch batch = database.batch();
     batch.delete('products');
-    batch.delete('audit'); // Limpiar auditoría al importar nuevo inventario
+    batch.delete('audit'); 
 
     for (var i = 1; i < rows.length; i++) {
       if (rows[i].length < 6) continue;
@@ -81,17 +81,36 @@ class DbHelper {
 
   static Future<void> registrarConteo(String clave, String zona, double cantidad) async {
     final database = await db;
-    // 1. Registrar en Auditoría
     await database.insert('audit', {
       'clave': clave,
       'zona': zona,
       'cantidad': cantidad,
-      'fecha': DateTime.now().toString(),
+      'fecha': DateTime.now().toString().substring(0, 19),
     });
-    // 2. Sumar al total físico del producto
     await database.rawUpdate(
         'UPDATE products SET fisica = fisica + ? WHERE clave = ?',
         [cantidad, clave]);
+  }
+
+  static Future<List<Map<String, dynamic>>> getFullAudit() async {
+    final database = await db;
+    return await database.rawQuery('''
+      SELECT audit.id, audit.fecha, audit.zona, products.descripcion, products.clave, audit.cantidad
+      FROM audit
+      JOIN products ON audit.clave = products.clave
+      ORDER BY audit.fecha DESC
+    ''');
+  }
+
+  static Future<void> eliminarRegistroAuditoria(int id, String clave, double cantidad) async {
+    final database = await db;
+    await database.transaction((txn) async {
+      await txn.rawUpdate(
+        'UPDATE products SET fisica = fisica - ? WHERE clave = ?',
+        [cantidad, clave]
+      );
+      await txn.delete('audit', where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   static Future<List<Map<String, dynamic>>> search(String query) async {
@@ -110,7 +129,7 @@ class DbHelper {
 }
 
 /* =======================
-   APP & UI
+   PANTALLAS
 ======================= */
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -204,7 +223,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
     showDialog(
         context: context,
-        builder: (ctx) => StatefulBuilder( // Necesario para que el dropdown cambie de valor
+        builder: (ctx) => StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
                 title: Text(product['descripcion']),
                 content: Column(
@@ -212,7 +231,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   children: [
                     DropdownButtonFormField<String>(
                       value: zonaSeleccionada,
-                      decoration: const InputDecoration(labelText: 'Área / Zona de conteo'),
+                      decoration: const InputDecoration(labelText: 'Área de conteo'),
                       items: zonas.map((z) => DropdownMenuItem(value: z, child: Text(z))).toList(),
                       onChanged: (val) => setDialogState(() => zonaSeleccionada = val!),
                     ),
@@ -221,7 +240,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       controller: controller,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       autofocus: true,
-                      decoration: const InputDecoration(labelText: 'Cantidad capturada', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(labelText: 'Cantidad', border: OutlineInputBorder()),
                     ),
                   ],
                 ),
@@ -235,27 +254,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         _refreshList();
                         _updateCounters();
                       },
-                      child: const Text('Sumar al Área')),
+                      child: const Text('Sumar')),
                 ],
               ),
         ));
-  }
-
-  Future<void> _importCSV() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
-    if (result == null) return;
-    setState(() => isLoading = true);
-    try {
-      final file = File(result.files.single.path!);
-      final content = await file.readAsString();
-      final rows = const CsvToListConverter().convert(content);
-      await DbHelper.insertBatch(rows);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-    }
-    setState(() => isLoading = false);
-    _refreshList();
-    _updateCounters();
   }
 
   Future<void> _exportCSV() async {
@@ -266,10 +268,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
     String csvString = const ListToCsvConverter().convert(csvData);
     final directory = await getTemporaryDirectory();
-    final path = "${directory.path}/inventario_export.csv";
-    final file = File(path);
+    final file = File("${directory.path}/inventario_general.csv");
     await file.writeAsString(csvString);
-    await Share.shareXFiles([XFile(path)], text: 'Reporte de Inventario');
+    await Share.shareXFiles([XFile(file.path)], text: 'Reporte de Inventario');
   }
 
   @override
@@ -281,12 +282,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('Inventario', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            Text('Total: ${totalItems.toInt()} | Contados: ${itemsContados.toInt()}',
+            Text('Total SKU: ${totalItems.toInt()} | Contados: ${itemsContados.toInt()}',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
           ],
         ),
         actions: [
-          IconButton(icon: const Icon(Icons.add_box), onPressed: () => _goToAddProduct()),
+          IconButton(
+            icon: const Icon(Icons.history_edu, size: 28),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuditHistoryScreen())).then((_) {
+              _refreshList();
+              _updateCounters();
+            }),
+          ),
           IconButton(icon: const Icon(Icons.upload_file), onPressed: _importCSV),
           IconButton(icon: const Icon(Icons.download), onPressed: _exportCSV),
         ],
@@ -334,8 +341,134 @@ class _InventoryScreenState extends State<InventoryScreen> {
       ),
     );
   }
+
+  Future<void> _importCSV() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
+    if (result == null) return;
+    setState(() => isLoading = true);
+    try {
+      final file = File(result.files.single.path!);
+      final content = await file.readAsString();
+      final rows = const CsvToListConverter().convert(content);
+      await DbHelper.insertBatch(rows);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+    }
+    setState(() => isLoading = false);
+    _refreshList();
+    _updateCounters();
+  }
 }
 
+/* =======================
+   NUEVA PANTALLA: HISTORIAL DETALLADO
+======================= */
+class AuditHistoryScreen extends StatefulWidget {
+  const AuditHistoryScreen({super.key});
+  @override
+  State<AuditHistoryScreen> createState() => _AuditHistoryScreenState();
+}
+
+class _AuditHistoryScreenState extends State<AuditHistoryScreen> {
+  List<Map<String, dynamic>> _allLogs = [];
+  List<Map<String, dynamic>> _filteredLogs = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadData();
+  }
+
+  void _loadData() async {
+    final data = await DbHelper.getFullAudit();
+    setState(() { _allLogs = data; _filteredLogs = data; });
+  }
+
+  void _filter(String q) {
+    setState(() {
+      _filteredLogs = _allLogs.where((l) {
+        final text = "${l['descripcion']} ${l['zona']} ${l['clave']}".toLowerCase();
+        return text.contains(q.toLowerCase());
+      }).toList();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text("Historial por Áreas")),
+      body: Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.all(8.0),
+            child: TextField(
+              onChanged: _filter,
+              decoration: const InputDecoration(
+                hintText: "Filtrar por producto o área...",
+                prefixIcon: Icon(Icons.filter_list),
+                border: OutlineInputBorder(),
+              ),
+            ),
+          ),
+          Expanded(
+            child: SingleChildScrollView(
+              scrollDirection: Axis.vertical,
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: DataTable(
+                  columns: const [
+                    DataColumn(label: Text('Hora')),
+                    DataColumn(label: Text('Producto')),
+                    DataColumn(label: Text('Área')),
+                    DataColumn(label: Text('Cant.')),
+                    DataColumn(label: Text('Acción')),
+                  ],
+                  rows: _filteredLogs.map((log) {
+                    return DataRow(cells: [
+                      DataCell(Text(log['fecha'].toString().split(' ')[1])),
+                      DataCell(Text(log['descripcion'])),
+                      DataCell(Text(log['zona'])),
+                      DataCell(Text(log['cantidad'].toString().replaceAll(RegExp(r'\.0$'), ''))),
+                      DataCell(IconButton(
+                        icon: const Icon(Icons.delete_forever, color: Colors.red),
+                        onPressed: () => _confirmDelete(log),
+                      )),
+                    ]);
+                  }).toList(),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _confirmDelete(Map<String, dynamic> log) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("¿Eliminar registro?"),
+        content: Text("Se restará ${log['cantidad']} de ${log['descripcion']}"),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+          ElevatedButton(
+            onPressed: () async {
+              await DbHelper.eliminarRegistroAuditoria(log['id'], log['clave'], log['cantidad']);
+              Navigator.pop(ctx);
+              _loadData();
+            },
+            child: const Text("Eliminar"),
+          )
+        ],
+      ),
+    );
+  }
+}
+
+/* =======================
+   RESTO DE PANTALLAS (ADD & SCANNER)
+======================= */
 class AddProductScreen extends StatefulWidget {
   final String? initialCode;
   const AddProductScreen({super.key, this.initialCode});
