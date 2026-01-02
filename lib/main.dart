@@ -24,18 +24,33 @@ class DbHelper {
 
   static Future<Database> _initDb() async {
     String path = p.join(await getDatabasesPath(), 'inventory.db');
-    return await openDatabase(path, version: 1, onCreate: (db, version) async {
+    return await openDatabase(path, version: 2, // Subimos versión para aplicar cambios
+        onCreate: (db, version) async {
       await db.execute('''
         CREATE TABLE products (
           clave TEXT PRIMARY KEY,
           codbar TEXT,
           descripcion TEXT,
           marca TEXT,
-          unidad TEXT,
-          existencia INTEGER,
-          fisica INTEGER DEFAULT 0
+          unit TEXT,
+          existencia REAL, 
+          fisica REAL DEFAULT 0
         )''');
+      await _createAuditTable(db);
+    }, onUpgrade: (db, oldV, newV) async {
+      if (oldV < 2) await _createAuditTable(db);
     });
+  }
+
+  static Future<void> _createAuditTable(Database db) async {
+    await db.execute('''
+        CREATE TABLE audit (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          clave TEXT,
+          zona TEXT,
+          cantidad REAL,
+          fecha TEXT
+        )''');
   }
 
   static Future<void> insertProduct(Map<String, dynamic> product) async {
@@ -47,40 +62,45 @@ class DbHelper {
     final database = await db;
     Batch batch = database.batch();
     batch.delete('products');
-    
+    batch.delete('audit'); // Limpiar auditoría al importar nuevo inventario
+
     for (var i = 1; i < rows.length; i++) {
       if (rows[i].length < 6) continue;
       batch.insert('products', {
         'clave': rows[i][0].toString(),
         'codbar': rows[i][1].toString(),
         'descripcion': rows[i][2].toString(),
-        'unidad': rows[i][3].toString(),
+        'unit': rows[i][3].toString(),
         'marca': rows[i][4].toString(),
-        'existencia': int.tryParse(rows[i][5].toString()) ?? 0,
-        'fisica': 0
+        'existencia': double.tryParse(rows[i][5].toString()) ?? 0.0,
+        'fisica': 0.0
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
   }
 
-  static Future<void> updateFisica(String clave, int nuevaCantidad) async {
+  static Future<void> registrarConteo(String clave, String zona, double cantidad) async {
     final database = await db;
+    // 1. Registrar en Auditoría
+    await database.insert('audit', {
+      'clave': clave,
+      'zona': zona,
+      'cantidad': cantidad,
+      'fecha': DateTime.now().toString(),
+    });
+    // 2. Sumar al total físico del producto
     await database.rawUpdate(
-      'UPDATE products SET fisica = fisica + ? WHERE clave = ?',
-      [nuevaCantidad, clave]
-    );
+        'UPDATE products SET fisica = fisica + ? WHERE clave = ?',
+        [cantidad, clave]);
   }
 
   static Future<List<Map<String, dynamic>>> search(String query) async {
     final database = await db;
     if (query.isEmpty) return await database.query('products', limit: 100);
-    
-    return await database.query(
-      'products',
-      where: 'descripcion LIKE ? OR clave LIKE ? OR codbar LIKE ? OR marca LIKE ?',
-      whereArgs: ['%$query%', '%$query%', '%$query%', '%$query%'],
-      limit: 100
-    );
+    return await database.query('products',
+        where: 'descripcion LIKE ? OR clave LIKE ? OR codbar LIKE ? OR marca LIKE ?',
+        whereArgs: ['%$query%', '%$query%', '%$query%', '%$query%'],
+        limit: 100);
   }
 
   static Future<List<Map<String, dynamic>>> getAllForExport() async {
@@ -114,10 +134,8 @@ class _InventoryScreenState extends State<InventoryScreen> {
   List<Map<String, dynamic>> displayedProducts = [];
   final TextEditingController _searchController = TextEditingController();
   bool isLoading = false;
-
-  // Variables para los contadores
-  int totalItems = 0;
-  int itemsContados = 0;
+  double totalItems = 0;
+  double itemsContados = 0;
 
   @override
   void initState() {
@@ -126,26 +144,14 @@ class _InventoryScreenState extends State<InventoryScreen> {
     _updateCounters();
   }
 
-  // Función para actualizar los contadores superiores
   void _updateCounters() async {
     final database = await DbHelper.db;
-    
-    // Contar total de productos
-    final total = Sqflite.firstIntValue(
-      await database.rawQuery('SELECT COUNT(*) FROM products')
-    ) ?? 0;
-
-    // Contar productos donde ya se capturó algo en física (fisica > 0)
-    final contados = Sqflite.firstIntValue(
-      await database.rawQuery('SELECT COUNT(*) FROM products WHERE fisica > 0')
-    ) ?? 0;
-
-    if (mounted) {
-      setState(() {
-        totalItems = total;
-        itemsContados = contados;
-      });
-    }
+    final total = Sqflite.firstIntValue(await database.rawQuery('SELECT COUNT(*) FROM products')) ?? 0;
+    final contados = Sqflite.firstIntValue(await database.rawQuery('SELECT COUNT(*) FROM products WHERE fisica > 0')) ?? 0;
+    if (mounted) setState(() {
+      totalItems = total.toDouble();
+      itemsContados = contados.toDouble();
+    });
   }
 
   void _refreshList() async {
@@ -154,20 +160,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   void _onScan() async {
-    final code = await Navigator.push<String>(
-      context, 
-      MaterialPageRoute(builder: (_) => const ScannerScreen())
-    );
-
+    final code = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const ScannerScreen()));
     if (code != null && mounted) {
       await Future.delayed(const Duration(milliseconds: 400));
-      
       final database = await DbHelper.db;
-      final res = await database.query('products', 
-        where: 'codbar = ? OR clave = ?', 
-        whereArgs: [code, code]
-      );
-
+      final res = await database.query('products', where: 'codbar = ? OR clave = ?', whereArgs: [code, code]);
       if (res.isNotEmpty) {
         _showConteoDialog(res.first);
       } else {
@@ -178,74 +175,70 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   void _showNotFoundDialog(String code) {
     showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("No encontrado"),
-        content: Text("El código '$code' no existe en la base de datos. ¿Deseas registrarlo?"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
-          ElevatedButton(
-            onPressed: () {
-              Navigator.pop(ctx);
-              _goToAddProduct(code);
-            }, 
-            child: const Text("Registrar")
-          )
-        ],
-      )
-    );
+        context: context,
+        builder: (ctx) => AlertDialog(
+              title: const Text("No encontrado"),
+              content: Text("El código '$code' no existe. ¿Deseas registrarlo?"),
+              actions: [
+                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+                ElevatedButton(
+                    onPressed: () {
+                      Navigator.pop(ctx);
+                      _goToAddProduct(code);
+                    },
+                    child: const Text("Registrar"))
+              ],
+            ));
   }
 
   void _goToAddProduct([String? initialCode]) async {
-    await Navigator.push(
-      context, 
-      MaterialPageRoute(builder: (_) => AddProductScreen(initialCode: initialCode))
-    );
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => AddProductScreen(initialCode: initialCode)));
     _refreshList();
-    _updateCounters(); // Actualizar contador al volver de agregar
+    _updateCounters();
   }
 
   void _showConteoDialog(Map<String, dynamic> product) {
     final controller = TextEditingController();
+    String zonaSeleccionada = 'Piso de Venta';
+    final zonas = ['Piso de Venta', 'Marbete', 'Bodega', 'Vitrina', 'Exhibición', 'Entregas', 'Cajas', 'Remate'];
+
     showDialog(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text(product['descripcion']),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              "Marca: ${product['marca']} | Clave: ${product['clave']}",
-              style: const TextStyle(fontSize: 14, color: Colors.grey),
-            ),
-            const SizedBox(height: 15),
-            TextField(
-              controller: controller,
-              keyboardType: TextInputType.number,
-              autofocus: true,
-              decoration: const InputDecoration(
-                labelText: 'Cantidad física encontrada',
-                border: OutlineInputBorder()
+        context: context,
+        builder: (ctx) => StatefulBuilder( // Necesario para que el dropdown cambie de valor
+          builder: (context, setDialogState) => AlertDialog(
+                title: Text(product['descripcion']),
+                content: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    DropdownButtonFormField<String>(
+                      value: zonaSeleccionada,
+                      decoration: const InputDecoration(labelText: 'Área / Zona de conteo'),
+                      items: zonas.map((z) => DropdownMenuItem(value: z, child: Text(z))).toList(),
+                      onChanged: (val) => setDialogState(() => zonaSeleccionada = val!),
+                    ),
+                    const SizedBox(height: 15),
+                    TextField(
+                      controller: controller,
+                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                      autofocus: true,
+                      decoration: const InputDecoration(labelText: 'Cantidad capturada', border: OutlineInputBorder()),
+                    ),
+                  ],
+                ),
+                actions: [
+                  TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
+                  ElevatedButton(
+                      onPressed: () async {
+                        double cant = double.tryParse(controller.text) ?? 0.0;
+                        await DbHelper.registrarConteo(product['clave'], zonaSeleccionada, cant);
+                        if (mounted) Navigator.pop(context);
+                        _refreshList();
+                        _updateCounters();
+                      },
+                      child: const Text('Sumar al Área')),
+                ],
               ),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
-          ElevatedButton(
-            onPressed: () async {
-              int cant = int.tryParse(controller.text) ?? 0;
-              await DbHelper.updateFisica(product['clave'], cant);
-              if (mounted) Navigator.pop(context);
-              _refreshList();
-              _updateCounters(); // Actualizar contador al sumar cantidad
-            }, 
-            child: const Text('Sumar')
-          ),
-        ],
-      )
-    );
+        ));
   }
 
   Future<void> _importCSV() async {
@@ -262,14 +255,14 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
     setState(() => isLoading = false);
     _refreshList();
-    _updateCounters(); // Actualizar contador al importar CSV
+    _updateCounters();
   }
 
   Future<void> _exportCSV() async {
     final data = await DbHelper.getAllForExport();
-    List<List<dynamic>> csvData = [['Clave', 'Código', 'Descripción','Unidad', 'Marca', 'Existencia', 'Física', 'Diferencia']];
+    List<List<dynamic>> csvData = [['Clave', 'Código', 'Descripción', 'Unidad', 'Marca', 'Existencia', 'Física', 'Diferencia']];
     for (var p in data) {
-      csvData.add([p['clave'], p['codbar'], p['descripcion'],p['unidad'], p['marca'], p['existencia'], p['fisica'], p['fisica'] - p['existencia']]);
+      csvData.add([p['clave'], p['codbar'], p['descripcion'], p['unit'], p['marca'], p['existencia'], p['fisica'], p['fisica'] - p['existencia']]);
     }
     String csvString = const ListToCsvConverter().convert(csvData);
     final directory = await getTemporaryDirectory();
@@ -283,15 +276,13 @@ class _InventoryScreenState extends State<InventoryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        // Título dinámico con contadores
+        toolbarHeight: 80,
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Inventario', style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-            Text(
-              'Total: $totalItems | Contados: $itemsContados',
-              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal),
-            ),
+            const Text('Inventario', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+            Text('Total: ${totalItems.toInt()} | Contados: ${itemsContados.toInt()}',
+                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
           ],
         ),
         actions: [
@@ -309,12 +300,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
               controller: _searchController,
               onChanged: (_) => _refreshList(),
               decoration: InputDecoration(
-                hintText: 'Buscar (Clave, Barra, Marca o Descr)...',
-                prefixIcon: const Icon(Icons.search),
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                filled: true,
-                fillColor: Colors.grey[100]
-              ),
+                  hintText: 'Buscar...',
+                  prefixIcon: const Icon(Icons.search),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
+                  filled: true,
+                  fillColor: Colors.grey[100]),
             ),
           ),
           Expanded(
@@ -326,8 +316,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   child: ListTile(
                     title: Text(p['descripcion'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text("Clave: ${p['clave']} | Unidad: ${p['unidad']} | Marca: ${p['marca']} | Stock: ${p['existencia']}"),
-                    trailing: Text("${p['fisica']}", style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.blue)),
+                    subtitle: Text("Clave: ${p['clave']} | Stock: ${p['existencia']}"),
+                    trailing: Text("${p['fisica']}".replaceAll(RegExp(r'\.0$'), ''),
+                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.blue)),
                     onTap: () => _showConteoDialog(p),
                   ),
                 );
@@ -345,9 +336,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 }
 
-/* =======================
-   CRUD: AGREGAR PRODUCTO
-======================= */
 class AddProductScreen extends StatefulWidget {
   final String? initialCode;
   const AddProductScreen({super.key, this.initialCode});
@@ -379,9 +367,9 @@ class _AddProductScreenState extends State<AddProductScreen> {
         'codbar': _barCtrl.text,
         'descripcion': _descCtrl.text,
         'marca': _marcaCtrl.text,
-        'unidad': 'PZ',
-        'existencia': int.tryParse(_stockCtrl.text) ?? 0,
-        'fisica': 0
+        'unit': 'PZ',
+        'existencia': double.tryParse(_stockCtrl.text) ?? 0.0,
+        'fisica': 0.0
       });
       if (mounted) Navigator.pop(context);
     }
@@ -390,13 +378,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text("Nuevo Producto"),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: () => Navigator.pop(context),
-        ),
-      ),
+      appBar: AppBar(title: const Text("Nuevo Producto")),
       body: Padding(
         padding: const EdgeInsets.all(16.0),
         child: Form(
@@ -404,20 +386,12 @@ class _AddProductScreenState extends State<AddProductScreen> {
           child: ListView(
             children: [
               TextFormField(controller: _claveCtrl, decoration: const InputDecoration(labelText: "Clave *"), validator: (v) => v!.isEmpty ? "Requerido" : null),
-              const SizedBox(height: 10),
               TextFormField(controller: _barCtrl, decoration: const InputDecoration(labelText: "Código de Barras")),
-              const SizedBox(height: 10),
               TextFormField(controller: _descCtrl, decoration: const InputDecoration(labelText: "Descripción *"), validator: (v) => v!.isEmpty ? "Requerido" : null),
-              const SizedBox(height: 10),
               TextFormField(controller: _marcaCtrl, decoration: const InputDecoration(labelText: "Marca")),
-              const SizedBox(height: 10),
               TextFormField(controller: _stockCtrl, decoration: const InputDecoration(labelText: "Stock en Sistema"), keyboardType: TextInputType.number),
               const SizedBox(height: 30),
-              ElevatedButton(
-                onPressed: _save,
-                style: ElevatedButton.styleFrom(minimumSize: const Size(double.infinity, 50)),
-                child: const Text("GUARDAR E IR ATRÁS"),
-              )
+              ElevatedButton(onPressed: _save, child: const Text("GUARDAR")),
             ],
           ),
         ),
@@ -426,9 +400,6 @@ class _AddProductScreenState extends State<AddProductScreen> {
   }
 }
 
-/* =======================
-   SCANNER SCREEN
-======================= */
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
   @override
@@ -438,17 +409,12 @@ class ScannerScreen extends StatefulWidget {
 class _ScannerScreenState extends State<ScannerScreen> {
   final controller = MobileScannerController();
   bool isDetected = false;
-
   @override
-  void dispose() { 
-    controller.dispose(); 
-    super.dispose(); 
-  }
-
+  void dispose() { controller.dispose(); super.dispose(); }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Escaneando Código")),
+      appBar: AppBar(title: const Text("Escaneando...")),
       body: MobileScanner(
         controller: controller,
         onDetect: (cap) {
