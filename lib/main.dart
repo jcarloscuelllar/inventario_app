@@ -24,7 +24,7 @@ class DbHelper {
 
   static Future<Database> _initDb() async {
     String path = p.join(await getDatabasesPath(), 'inventory.db');
-    return await openDatabase(path, version: 2, 
+    return await openDatabase(path, version: 3, 
         onCreate: (db, version) async {
       await db.execute('''
         CREATE TABLE products (
@@ -34,11 +34,14 @@ class DbHelper {
           marca TEXT,
           unit TEXT,
           existencia REAL, 
-          fisica REAL DEFAULT 0
+          fisica REAL DEFAULT 0,
+          ajuste_vinculo TEXT DEFAULT ''
         )''');
       await _createAuditTable(db);
     }, onUpgrade: (db, oldV, newV) async {
-      if (oldV < 2) await _createAuditTable(db);
+      if (oldV < 3) {
+        await db.execute('ALTER TABLE products ADD COLUMN ajuste_vinculo TEXT DEFAULT ""');
+      }
     });
   }
 
@@ -73,7 +76,8 @@ class DbHelper {
         'unit': rows[i][3].toString(),
         'marca': rows[i][4].toString(),
         'existencia': double.tryParse(rows[i][5].toString()) ?? 0.0,
-        'fisica': 0.0
+        'fisica': 0.0,
+        'ajuste_vinculo': ''
       }, conflictAlgorithm: ConflictAlgorithm.replace);
     }
     await batch.commit(noResult: true);
@@ -90,6 +94,14 @@ class DbHelper {
     await database.rawUpdate(
         'UPDATE products SET fisica = fisica + ? WHERE clave = ?',
         [cantidad, clave]);
+  }
+
+  static Future<void> vincularAjuste(String clave, String nomenclatura) async {
+    final database = await db;
+    await database.rawUpdate(
+      'UPDATE products SET ajuste_vinculo = ajuste_vinculo || ? WHERE clave = ?',
+      [" $nomenclatura", clave]
+    );
   }
 
   static Future<List<Map<String, dynamic>>> getFullAudit() async {
@@ -115,9 +127,11 @@ class DbHelper {
 
   static Future<List<Map<String, dynamic>>> search(String query) async {
     final database = await db;
-    if (query.isEmpty) return await database.query('products', limit: 100);
+    // Solo mostramos productos con diferencias o pendientes (fisica 0)
+    String baseWhere = '(fisica != existencia OR fisica = 0)';
+    if (query.isEmpty) return await database.query('products', where: baseWhere, limit: 100);
     return await database.query('products',
-        where: 'descripcion LIKE ? OR clave LIKE ? OR codbar LIKE ? OR marca LIKE ?',
+        where: '($baseWhere) AND (descripcion LIKE ? OR clave LIKE ? OR codbar LIKE ? OR marca LIKE ?)',
         whereArgs: ['%$query%', '%$query%', '%$query%', '%$query%'],
         limit: 100);
   }
@@ -129,7 +143,7 @@ class DbHelper {
 }
 
 /* =======================
-   PANTALLAS
+   PANTALLA PRINCIPAL
 ======================= */
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
@@ -152,15 +166,27 @@ class InventoryScreen extends StatefulWidget {
 class _InventoryScreenState extends State<InventoryScreen> {
   List<Map<String, dynamic>> displayedProducts = [];
   final TextEditingController _searchController = TextEditingController();
+  Set<String> selectedClaves = {};
+  bool isSelectionMode = false;
   bool isLoading = false;
   double totalItems = 0;
   double itemsContados = 0;
+  int ajusteGlobalCount = 0;
 
   @override
   void initState() {
     super.initState();
     _refreshList();
     _updateCounters();
+  }
+
+  String _generateAjusteLetter(int index) {
+    String letter = "";
+    while (index >= 0) {
+      letter = String.fromCharCode((index % 26) + 65) + letter;
+      index = (index ~/ 26) - 1;
+    }
+    return letter;
   }
 
   void _updateCounters() async {
@@ -192,33 +218,46 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
   }
 
-  void _showNotFoundDialog(String code) {
-    showDialog(
-        context: context,
-        builder: (ctx) => AlertDialog(
-              title: const Text("No encontrado"),
-              content: Text("El código '$code' no existe. ¿Deseas registrarlo?"),
-              actions: [
-                TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
-                ElevatedButton(
-                    onPressed: () {
-                      Navigator.pop(ctx);
-                      _goToAddProduct(code);
-                    },
-                    child: const Text("Registrar"))
-              ],
-            ));
-  }
+  void _processVincularAjuste() async {
+    if (selectedClaves.length < 2) return;
 
-  void _goToAddProduct([String? initialCode]) async {
-    await Navigator.push(context, MaterialPageRoute(builder: (_) => AddProductScreen(initialCode: initialCode)));
+    List<Map<String, dynamic>> seleccionados = displayedProducts
+        .where((p) => selectedClaves.contains(p['clave']))
+        .toList();
+
+    double totalPos = 0;
+    double totalNeg = 0;
+
+    for (var p in seleccionados) {
+      double d = p['fisica'] - p['existencia'];
+      if (d > 0) totalPos += d; else totalNeg += d.abs();
+    }
+
+    double maxSaldable = totalPos < totalNeg ? totalPos : totalNeg;
+
+    if (maxSaldable <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Seleccione sobrantes y faltantes")));
+      return;
+    }
+
+    String letra = _generateAjusteLetter(ajusteGlobalCount);
+    for (var p in seleccionados) {
+      double d = p['fisica'] - p['existencia'];
+      String mark = (d > 0) ? "+${maxSaldable.toInt()}$letra" : "-${maxSaldable.toInt()}$letra";
+      await DbHelper.vincularAjuste(p['clave'], mark);
+    }
+
+    setState(() {
+      ajusteGlobalCount++;
+      selectedClaves.clear();
+      isSelectionMode = false;
+    });
     _refreshList();
-    _updateCounters();
   }
 
   void _showConteoDialog(Map<String, dynamic> product) {
     final controller = TextEditingController();
-    String zonaSeleccionada = 'Piso de Venta';
+    String zona = 'Piso de Venta';
     final zonas = ['Piso de Venta', 'Marbete', 'Bodega', 'Vitrina', 'Exhibición', 'Entregas', 'Cajas', 'Remate'];
 
     showDialog(
@@ -230,17 +269,15 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     DropdownButtonFormField<String>(
-                      value: zonaSeleccionada,
-                      decoration: const InputDecoration(labelText: 'Área de conteo'),
+                      value: zona,
                       items: zonas.map((z) => DropdownMenuItem(value: z, child: Text(z))).toList(),
-                      onChanged: (val) => setDialogState(() => zonaSeleccionada = val!),
+                      onChanged: (val) => setDialogState(() => zona = val!),
                     ),
-                    const SizedBox(height: 15),
                     TextField(
                       controller: controller,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       autofocus: true,
-                      decoration: const InputDecoration(labelText: 'Cantidad', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(labelText: 'Cantidad'),
                     ),
                   ],
                 ),
@@ -249,7 +286,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   ElevatedButton(
                       onPressed: () async {
                         double cant = double.tryParse(controller.text) ?? 0.0;
-                        await DbHelper.registrarConteo(product['clave'], zonaSeleccionada, cant);
+                        await DbHelper.registrarConteo(product['clave'], zona, cant);
                         if (mounted) Navigator.pop(context);
                         _refreshList();
                         _updateCounters();
@@ -262,56 +299,52 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
   Future<void> _exportCSV() async {
     final data = await DbHelper.getAllForExport();
-    List<List<dynamic>> csvData = [['Clave', 'Código', 'Descripción', 'Unidad', 'Marca', 'Existencia', 'Física', 'Diferencia']];
+    List<List<dynamic>> csvData = [
+      ['Clave', 'Ajuste', 'Código', 'Descripción', 'Unidad', 'Marca', 'Existencia', 'Física', 'Sobrantes', 'Faltantes']
+    ];
     for (var p in data) {
-      csvData.add([p['clave'], p['codbar'], p['descripcion'], p['unit'], p['marca'], p['existencia'], p['fisica'], p['fisica'] - p['existencia']]);
+      double diff = p['fisica'] - p['existencia'];
+      csvData.add([
+        p['clave'],
+        p['ajuste_vinculo'],
+        p['codbar'],
+        p['descripcion'],
+        p['unit'],
+        p['marca'],
+        p['existencia'],
+        diff == 0 ? '-' : p['fisica'],
+        diff > 0 ? "+${diff.toStringAsFixed(2)}S" : "",
+        diff < 0 ? "-${diff.abs().toStringAsFixed(2)}F" : ""
+      ]);
     }
     String csvString = const ListToCsvConverter().convert(csvData);
     final directory = await getTemporaryDirectory();
-    final file = File("${directory.path}/inventario_general.csv");
+    final file = File("${directory.path}/reporte_inventario.csv");
     await file.writeAsString(csvString);
-    await Share.shareXFiles([XFile(file.path)], text: 'Reporte de Inventario');
+    await Share.shareXFiles([XFile(file.path)], text: 'Reporte CSV');
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        toolbarHeight: 80,
-        title: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Inventario', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            Text('Total SKU: ${totalItems.toInt()} | Contados: ${itemsContados.toInt()}',
-                style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
-          ],
-        ),
+        title: Text(isSelectionMode ? "${selectedClaves.length} seleccionados" : 'Inventario'),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.history_edu, size: 28),
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuditHistoryScreen())).then((_) {
-              _refreshList();
-              _updateCounters();
-            }),
-          ),
+          if (isSelectionMode)
+            IconButton(icon: const Icon(Icons.balance, color: Colors.blue, size: 30), onPressed: _processVincularAjuste),
+          IconButton(icon: const Icon(Icons.history_edu), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuditHistoryScreen()))),
           IconButton(icon: const Icon(Icons.upload_file), onPressed: _importCSV),
           IconButton(icon: const Icon(Icons.download), onPressed: _exportCSV),
         ],
       ),
       body: Column(
         children: [
-          if (isLoading) const LinearProgressIndicator(),
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: TextField(
               controller: _searchController,
               onChanged: (_) => _refreshList(),
-              decoration: InputDecoration(
-                  hintText: 'Buscar...',
-                  prefixIcon: const Icon(Icons.search),
-                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10)),
-                  filled: true,
-                  fillColor: Colors.grey[100]),
+              decoration: InputDecoration(hintText: 'Buscar diferencias...', prefixIcon: const Icon(Icons.search), border: OutlineInputBorder(borderRadius: BorderRadius.circular(10))),
             ),
           ),
           Expanded(
@@ -319,14 +352,23 @@ class _InventoryScreenState extends State<InventoryScreen> {
               itemCount: displayedProducts.length,
               itemBuilder: (context, i) {
                 final p = displayedProducts[i];
+                bool isSelected = selectedClaves.contains(p['clave']);
+                double diff = p['fisica'] - p['existencia'];
                 return Card(
+                  color: isSelected ? Colors.yellow[200] : null,
                   margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   child: ListTile(
+                    onLongPress: () => setState(() { isSelectionMode = true; selectedClaves.add(p['clave']); }),
+                    onTap: () {
+                      if (isSelectionMode) {
+                        setState(() { isSelected ? selectedClaves.remove(p['clave']) : selectedClaves.add(p['clave']); if (selectedClaves.isEmpty) isSelectionMode = false; });
+                      } else {
+                        _showConteoDialog(p);
+                      }
+                    },
                     title: Text(p['descripcion'], style: const TextStyle(fontWeight: FontWeight.bold)),
-                    subtitle: Text("Clave: ${p['clave']} | Stock: ${p['existencia']}"),
-                    trailing: Text("${p['fisica']}".replaceAll(RegExp(r'\.0$'), ''),
-                        style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: Colors.blue)),
-                    onTap: () => _showConteoDialog(p),
+                    subtitle: Text("Clave: ${p['clave']} | Ajustes:${p['ajuste_vinculo']}"),
+                    trailing: Text(diff == 0 ? "-" : diff.toStringAsFixed(1), style: TextStyle(fontSize: 18, color: diff > 0 ? Colors.green : (diff < 0 ? Colors.red : Colors.grey))),
                   ),
                 );
               },
@@ -334,11 +376,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
           ),
         ],
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _onScan,
-        label: const Text("Escanear"),
-        icon: const Icon(Icons.qr_code_scanner),
-      ),
+      floatingActionButton: FloatingActionButton.extended(onPressed: _onScan, label: const Text("Escanear"), icon: const Icon(Icons.qr_code_scanner)),
     );
   }
 
@@ -348,20 +386,30 @@ class _InventoryScreenState extends State<InventoryScreen> {
     setState(() => isLoading = true);
     try {
       final file = File(result.files.single.path!);
-      final content = await file.readAsString();
-      final rows = const CsvToListConverter().convert(content);
+      final rows = const CsvToListConverter().convert(await file.readAsString());
       await DbHelper.insertBatch(rows);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-    }
+    } catch (e) { ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e"))); }
     setState(() => isLoading = false);
+    _refreshList();
+    _updateCounters();
+  }
+
+  void _showNotFoundDialog(String code) {
+    showDialog(context: context, builder: (ctx) => AlertDialog(title: const Text("No encontrado"), actions: [
+      TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
+      ElevatedButton(onPressed: () { Navigator.pop(ctx); _goToAddProduct(code); }, child: const Text("Registrar"))
+    ]));
+  }
+
+  void _goToAddProduct([String? initialCode]) async {
+    await Navigator.push(context, MaterialPageRoute(builder: (_) => AddProductScreen(initialCode: initialCode)));
     _refreshList();
     _updateCounters();
   }
 }
 
 /* =======================
-   NUEVA PANTALLA: HISTORIAL DETALLADO
+   REPORTE DE AUDITORÍA
 ======================= */
 class AuditHistoryScreen extends StatefulWidget {
   const AuditHistoryScreen({super.key});
@@ -370,104 +418,36 @@ class AuditHistoryScreen extends StatefulWidget {
 }
 
 class _AuditHistoryScreenState extends State<AuditHistoryScreen> {
-  List<Map<String, dynamic>> _allLogs = [];
-  List<Map<String, dynamic>> _filteredLogs = [];
-
+  List<Map<String, dynamic>> _logs = [];
   @override
-  void initState() {
-    super.initState();
-    _loadData();
-  }
-
-  void _loadData() async {
-    final data = await DbHelper.getFullAudit();
-    setState(() { _allLogs = data; _filteredLogs = data; });
-  }
-
-  void _filter(String q) {
-    setState(() {
-      _filteredLogs = _allLogs.where((l) {
-        final text = "${l['descripcion']} ${l['zona']} ${l['clave']}".toLowerCase();
-        return text.contains(q.toLowerCase());
-      }).toList();
-    });
-  }
+  void initState() { super.initState(); _load(); }
+  void _load() async { final d = await DbHelper.getFullAudit(); setState(() => _logs = d); }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Historial por Áreas")),
-      body: Column(
-        children: [
-          Padding(
-            padding: const EdgeInsets.all(8.0),
-            child: TextField(
-              onChanged: _filter,
-              decoration: const InputDecoration(
-                hintText: "Filtrar por producto o área...",
-                prefixIcon: Icon(Icons.filter_list),
-                border: OutlineInputBorder(),
-              ),
-            ),
-          ),
-          Expanded(
-            child: SingleChildScrollView(
-              scrollDirection: Axis.vertical,
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: DataTable(
-                  columns: const [
-                    DataColumn(label: Text('Hora')),
-                    DataColumn(label: Text('Producto')),
-                    DataColumn(label: Text('Área')),
-                    DataColumn(label: Text('Cant.')),
-                    DataColumn(label: Text('Acción')),
-                  ],
-                  rows: _filteredLogs.map((log) {
-                    return DataRow(cells: [
-                      DataCell(Text(log['fecha'].toString().split(' ')[1])),
-                      DataCell(Text(log['descripcion'])),
-                      DataCell(Text(log['zona'])),
-                      DataCell(Text(log['cantidad'].toString().replaceAll(RegExp(r'\.0$'), ''))),
-                      DataCell(IconButton(
-                        icon: const Icon(Icons.delete_forever, color: Colors.red),
-                        onPressed: () => _confirmDelete(log),
-                      )),
-                    ]);
-                  }).toList(),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _confirmDelete(Map<String, dynamic> log) {
-    showDialog(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text("¿Eliminar registro?"),
-        content: Text("Se restará ${log['cantidad']} de ${log['descripcion']}"),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
-          ElevatedButton(
-            onPressed: () async {
-              await DbHelper.eliminarRegistroAuditoria(log['id'], log['clave'], log['cantidad']);
-              Navigator.pop(ctx);
-              _loadData();
+      appBar: AppBar(title: const Text("Historial")),
+      body: ListView.builder(
+        itemCount: _logs.length,
+        itemBuilder: (ctx, i) {
+          final l = _logs[i];
+          return ListTile(
+            title: Text("${l['descripcion']} (${l['clave']})"),
+            subtitle: Text("${l['zona']} - ${l['fecha']}"),
+            trailing: Text("${l['cantidad']}", style: const TextStyle(fontWeight: FontWeight.bold)),
+            onLongPress: () async {
+               await DbHelper.eliminarRegistroAuditoria(l['id'], l['clave'], l['cantidad']);
+               _load();
             },
-            child: const Text("Eliminar"),
-          )
-        ],
+          );
+        },
       ),
     );
   }
 }
 
 /* =======================
-   RESTO DE PANTALLAS (ADD & SCANNER)
+   FORMULARIO Y SCANNER
 ======================= */
 class AddProductScreen extends StatefulWidget {
   final String? initialCode;
@@ -479,52 +459,29 @@ class AddProductScreen extends StatefulWidget {
 class _AddProductScreenState extends State<AddProductScreen> {
   final _formKey = GlobalKey<FormState>();
   final _claveCtrl = TextEditingController();
-  final _barCtrl = TextEditingController();
   final _descCtrl = TextEditingController();
-  final _marcaCtrl = TextEditingController();
   final _stockCtrl = TextEditingController(text: "0");
 
   @override
-  void initState() {
-    super.initState();
-    if (widget.initialCode != null) {
-      _barCtrl.text = widget.initialCode!;
-      _claveCtrl.text = widget.initialCode!;
-    }
-  }
-
-  void _save() async {
-    if (_formKey.currentState!.validate()) {
-      await DbHelper.insertProduct({
-        'clave': _claveCtrl.text,
-        'codbar': _barCtrl.text,
-        'descripcion': _descCtrl.text,
-        'marca': _marcaCtrl.text,
-        'unit': 'PZ',
-        'existencia': double.tryParse(_stockCtrl.text) ?? 0.0,
-        'fisica': 0.0
-      });
-      if (mounted) Navigator.pop(context);
-    }
-  }
+  void initState() { super.initState(); if (widget.initialCode != null) _claveCtrl.text = widget.initialCode!; }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Nuevo Producto")),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Form(
-          key: _formKey,
-          child: ListView(
+      appBar: AppBar(title: const Text("Nuevo")),
+      body: Form(
+        key: _formKey,
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
             children: [
-              TextFormField(controller: _claveCtrl, decoration: const InputDecoration(labelText: "Clave *"), validator: (v) => v!.isEmpty ? "Requerido" : null),
-              TextFormField(controller: _barCtrl, decoration: const InputDecoration(labelText: "Código de Barras")),
-              TextFormField(controller: _descCtrl, decoration: const InputDecoration(labelText: "Descripción *"), validator: (v) => v!.isEmpty ? "Requerido" : null),
-              TextFormField(controller: _marcaCtrl, decoration: const InputDecoration(labelText: "Marca")),
-              TextFormField(controller: _stockCtrl, decoration: const InputDecoration(labelText: "Stock en Sistema"), keyboardType: TextInputType.number),
-              const SizedBox(height: 30),
-              ElevatedButton(onPressed: _save, child: const Text("GUARDAR")),
+              TextFormField(controller: _claveCtrl, decoration: const InputDecoration(labelText: "Clave")),
+              TextFormField(controller: _descCtrl, decoration: const InputDecoration(labelText: "Descripción")),
+              TextFormField(controller: _stockCtrl, decoration: const InputDecoration(labelText: "Stock"), keyboardType: TextInputType.number),
+              ElevatedButton(onPressed: () async {
+                await DbHelper.insertProduct({'clave': _claveCtrl.text, 'descripcion': _descCtrl.text, 'existencia': double.parse(_stockCtrl.text), 'fisica': 0, 'ajuste_vinculo': ''});
+                Navigator.pop(context);
+              }, child: const Text("Guardar"))
             ],
           ),
         ),
@@ -541,24 +498,15 @@ class ScannerScreen extends StatefulWidget {
 
 class _ScannerScreenState extends State<ScannerScreen> {
   final controller = MobileScannerController();
-  bool isDetected = false;
   @override
   void dispose() { controller.dispose(); super.dispose(); }
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Escaneando...")),
-      body: MobileScanner(
-        controller: controller,
-        onDetect: (cap) {
-          if (isDetected) return;
-          final code = cap.barcodes.first.rawValue;
-          if (code != null) {
-            isDetected = true;
-            Navigator.pop(context, code);
-          }
-        },
-      ),
+      body: MobileScanner(controller: controller, onDetect: (cap) {
+        final code = cap.barcodes.first.rawValue;
+        if (code != null) Navigator.pop(context, code);
+      }),
     );
   }
 }
