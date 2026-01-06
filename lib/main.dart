@@ -25,8 +25,8 @@ class DbHelper {
   }
 
   static Future<Database> _initDb() async {
-    String path = p.join(await getDatabasesPath(), 'inventory_v7.db');
-    return await openDatabase(path, version: 3, 
+    String path = p.join(await getDatabasesPath(), 'inventory_v8.db');
+    return await openDatabase(path, version: 1, 
         onCreate: (db, version) async {
       await db.execute('''
         CREATE TABLE products (
@@ -39,19 +39,12 @@ class DbHelper {
           fisica REAL DEFAULT 0,
           ajuste_vinculo TEXT DEFAULT ''
         )''');
-      await _createAuditTable(db);
-    }, onUpgrade: (db, oldV, newV) async {
-      if (oldV < 3) {
-        try { await db.execute('ALTER TABLE products ADD COLUMN ajuste_vinculo TEXT DEFAULT ""'); } catch(e){}
-      }
-    });
-  }
-
-  static Future<void> _createAuditTable(Database db) async {
-    await db.execute('''CREATE TABLE audit (
+      await db.execute('''
+        CREATE TABLE audit (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
           clave TEXT, zona TEXT, cantidad REAL, fecha TEXT
         )''');
+    });
   }
 
   static Future<void> insertBatch(List<List<dynamic>> rows) async {
@@ -137,7 +130,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     });
   }
 
-  // --- LÓGICA DE VINCULACIÓN ALGEBRAICA ---
+  // --- LÓGICA DE VINCULACIÓN ALGEBRAICA (CON FIX DE TIPOS) ---
   void _vincular(double cantAjuste) async {
     if (cantAjuste <= 0) return;
     String letra = String.fromCharCode((ajusteCounter % 26) + 65);
@@ -145,13 +138,17 @@ class _InventoryScreenState extends State<InventoryScreen> {
 
     for (String clave in selectedClaves) {
       final p = displayedProducts.firstWhere((e) => e['clave'] == clave);
-      double diff = p['fisica'] - p['existencia'];
+      // Casting explícito para evitar error de 'Object?'
+      double fisica = (p['fisica'] as num).toDouble();
+      double existencia = (p['existencia'] as num).toDouble();
+      
+      double diff = fisica - existencia;
       String nom = "";
 
-      if (diff > 0) { // Sobrante
+      if (diff > 0) {
         double res = diff - cantAjuste;
         nom = (res > 0) ? "+${res.toInt()}S +${cantAjuste.toInt()}$letra" : "+${cantAjuste.toInt()}$letra";
-      } else { // Faltante
+      } else {
         double res = diff.abs() - cantAjuste;
         nom = (res > 0) ? "-${res.toInt()}F -${cantAjuste.toInt()}$letra" : "-${cantAjuste.toInt()}$letra";
       }
@@ -170,7 +167,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     _refresh();
   }
 
-  // --- EXPORTAR PDF (4 TABLAS) ---
+  // --- EXPORTAR PDF (CORREGIDO PARA COMPILAR APK) ---
   Future<void> _exportPDF() async {
     final data = await (await DbHelper.db).query('products');
     final pdf = pw.Document();
@@ -182,29 +179,36 @@ class _InventoryScreenState extends State<InventoryScreen> {
     pdf.addPage(pw.MultiPage(
       build: (ctx) => [
         pw.Header(level: 0, child: pw.Text("REPORTE DE AUDITORIA E INVENTARIO")),
-        
         pw.Bullet(text: "1. Tabla General"),
         _buildPdfTable(['Clave', 'Sist.', 'Fis.', 'Sob.', 'Fal.', 'Ajuste'], data.map((p) {
-          double d = p['fisica'] - p['existencia'];
-          return [p['clave'].toString(), p['existencia'].toString(), p['fisica'].toString(), d > 0 ? d.toInt().toString() : '', d < 0 ? d.abs().toInt().toString() : '', p['ajuste_vinculo'].toString()];
+          // FIX DE TIPOS AQUÍ
+          double f = (p['fisica'] as num).toDouble();
+          double e = (p['existencia'] as num).toDouble();
+          double d = f - e;
+          
+          return [
+            p['clave'].toString(), 
+            e.toString(), 
+            f.toString(), 
+            d > 0 ? d.toInt().toString() : '', 
+            d < 0 ? d.abs().toInt().toString() : '', 
+            p['ajuste_vinculo'].toString()
+          ];
         }).toList()),
-
         pw.SizedBox(height: 20),
         pw.Bullet(text: "2. Solo Sobrantes Netos"),
-        _buildPdfTable(['Clave', 'Descripcion', 'Sobrante S'], sobrantes.map((p) => [p['clave'].toString(), p['descripcion'].toString(), p['ajuste_vinculo'].toString()]).toList()),
-
+        _buildPdfTable(['Clave', 'Desc.', 'Sobrante S'], sobrantes.map((p) => [p['clave'].toString(), p['descripcion'].toString(), p['ajuste_vinculo'].toString()]).toList()),
         pw.SizedBox(height: 20),
         pw.Bullet(text: "3. Solo Faltantes Netos"),
-        _buildPdfTable(['Clave', 'Descripcion', 'Faltante F'], faltantes.map((p) => [p['clave'].toString(), p['descripcion'].toString(), p['ajuste_vinculo'].toString()]).toList()),
-
+        _buildPdfTable(['Clave', 'Desc.', 'Faltante F'], faltantes.map((p) => [p['clave'].toString(), p['descripcion'].toString(), p['ajuste_vinculo'].toString()]).toList()),
         pw.SizedBox(height: 20),
         pw.Bullet(text: "4. Cruces Realizados"),
-        _buildPdfTable(['Clave', 'Descripcion', 'Vinculo'], ajustes.map((p) => [p['clave'].toString(), p['descripcion'].toString(), p['ajuste_vinculo'].toString()]).toList()),
+        _buildPdfTable(['Clave', 'Desc.', 'Vinculo'], ajustes.map((p) => [p['clave'].toString(), p['descripcion'].toString(), p['ajuste_vinculo'].toString()]).toList()),
       ],
     ));
 
     final dir = await getTemporaryDirectory();
-    final file = File("${dir.path}/reporte_ajustes.pdf");
+    final file = File("${dir.path}/reporte_final.pdf");
     await file.writeAsBytes(await pdf.save());
     await Share.shareXFiles([XFile(file.path)]);
   }
@@ -219,7 +223,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     );
   }
 
-  // --- DIÁLOGOS Y NAVEGACIÓN ---
+  // --- FUNCIONES DE SCANNER E IMPORTACIÓN SE MANTIENEN ---
   void _onScan() async {
     final code = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const ScannerScreen()));
     if (code != null) {
@@ -255,18 +259,6 @@ class _InventoryScreenState extends State<InventoryScreen> {
     ));
   }
 
-  void _vincularDialog() {
-    final ctrl = TextEditingController();
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      title: const Text("Ajuste Uno por Uno"),
-      content: TextField(controller: ctrl, keyboardType: TextInputType.number, decoration: const InputDecoration(hintText: "Cantidad a saldar")),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("Cancelar")),
-        ElevatedButton(onPressed: () { _vincular(double.tryParse(ctrl.text) ?? 0); Navigator.pop(ctx); }, child: const Text("Aplicar")),
-      ],
-    ));
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -274,11 +266,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
         toolbarHeight: 80,
         title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(isSelectionMode ? "${selectedClaves.length} Seleccionados" : 'Inventario', style: const TextStyle(fontWeight: FontWeight.bold)),
-          Text('Total: ${totalItems.toInt()} | Contados: ${itemsContados.toInt()}', style: const TextStyle(fontSize: 14)),
+          Text('Items: ${totalItems.toInt()} | Contados: ${itemsContados.toInt()}', style: const TextStyle(fontSize: 14)),
         ]),
         actions: [
           if (isSelectionMode) ...[
-            IconButton(icon: const Icon(Icons.balance, color: Colors.blue), onPressed: _vincularDialog),
+            IconButton(icon: const Icon(Icons.balance, color: Colors.blue), onPressed: () => _vincularDialog()),
             IconButton(icon: const Icon(Icons.refresh, color: Colors.orange), onPressed: _revertirAjuste),
           ],
           IconButton(icon: const Icon(Icons.history), onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuditHistoryScreen())).then((_) => _refresh())),
@@ -312,6 +304,15 @@ class _InventoryScreenState extends State<InventoryScreen> {
     );
   }
 
+  void _vincularDialog() {
+    final ctrl = TextEditingController();
+    showDialog(context: context, builder: (ctx) => AlertDialog(
+      title: const Text("Cruzado"),
+      content: TextField(controller: ctrl, keyboardType: TextInputType.number, decoration: const InputDecoration(labelText: "Cantidad a saldar")),
+      actions: [ElevatedButton(onPressed: () { _vincular(double.tryParse(ctrl.text) ?? 0); Navigator.pop(ctx); }, child: const Text("OK"))],
+    ));
+  }
+
   void _importCSV() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
     if (result != null) {
@@ -323,7 +324,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
 }
 
 /* =======================
-   VISTAS DE APOYO
+   VISTAS DE APOYO (HISTORIAL Y SCANNER)
 ======================= */
 class AuditHistoryScreen extends StatefulWidget {
   const AuditHistoryScreen({super.key});
@@ -343,7 +344,7 @@ class _AuditHistoryScreenState extends State<AuditHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Historial de Auditoría")),
+      appBar: AppBar(title: const Text("Auditoría")),
       body: ListView.builder(
         itemCount: logs.length,
         itemBuilder: (ctx, i) => ListTile(
