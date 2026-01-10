@@ -3,13 +3,14 @@ import 'package:mobile_scanner/mobile_scanner.dart';
 
 class ScannerScreen extends StatefulWidget {
   const ScannerScreen({super.key});
-  
+
   @override
   State<ScannerScreen> createState() => _ScannerScreenState();
 }
 
 class _ScannerScreenState extends State<ScannerScreen> {
-  final controller = MobileScannerController();
+  // En la v5.x se recomienda inicializar el controlador así
+  final MobileScannerController controller = MobileScannerController();
   bool isDetected = false;
 
   @override
@@ -24,18 +25,18 @@ class _ScannerScreenState extends State<ScannerScreen> {
       appBar: AppBar(
         title: const Text("Escaneando..."),
         actions: [
-          // Botones útiles para el escáner
-          IconButton(
-            icon: ValueListenableBuilder(
-              valueListenable: controller.torchState,
-              builder: (context, state, child) {
-                switch (state) {
-                  case TorchState.off: return const Icon(Icons.flash_off);
-                  case TorchState.on: return const Icon(Icons.flash_on);
-                }
-              },
-            ),
-            onPressed: () => controller.toggleTorch(),
+          // Corrección del Torch: Escuchamos directamente al controlador
+          ValueListenableBuilder(
+            valueListenable: controller,
+            builder: (context, state, child) {
+              final torchState = state.torchState;
+              return IconButton(
+                icon: Icon(
+                  torchState == TorchState.on ? Icons.flash_on : Icons.flash_off,
+                ),
+                onPressed: () => controller.toggleTorch(),
+              );
+            },
           ),
           IconButton(
             icon: const Icon(Icons.flip_camera_ios),
@@ -49,6 +50,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
             controller: controller,
             onDetect: (cap) {
               if (isDetected) return;
+              // Acceso correcto a los barcodes en v5.x
               final code = cap.barcodes.first.rawValue;
               if (code != null) {
                 isDetected = true;
@@ -56,7 +58,7 @@ class _ScannerScreenState extends State<ScannerScreen> {
               }
             },
           ),
-          // Guía visual en pantalla para el usuario
+          // Cuadro guía visual
           Center(
             child: Container(
               width: 250,

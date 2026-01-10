@@ -5,6 +5,8 @@ import 'package:csv/csv.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
+
+// Importaciones relativas según la estructura MVC
 import '../controllers/db_helper.dart';
 import 'audit_history_screen.dart';
 import 'add_product_screen.dart';
@@ -34,10 +36,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final database = await DbHelper.db;
     final total = Sqflite.firstIntValue(await database.rawQuery('SELECT COUNT(*) FROM products')) ?? 0;
     final contados = Sqflite.firstIntValue(await database.rawQuery('SELECT COUNT(*) FROM products WHERE fisica > 0')) ?? 0;
-    if (mounted) setState(() {
-      totalItems = total.toDouble();
-      itemsContados = contados.toDouble();
-    });
+    if (mounted) {
+      setState(() {
+        totalItems = total.toDouble();
+        itemsContados = contados.toDouble();
+      });
+    }
   }
 
   void _refreshList() async {
@@ -46,7 +50,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   void _onScan() async {
-    final code = await Navigator.push<String>(context, MaterialPageRoute(builder: (_) => const ScannerScreen()));
+    // IMPORTANTE: Se quitó el const de la navegación
+    final code = await Navigator.push<String>(
+      context, 
+      MaterialPageRoute(builder: (_) => const ScannerScreen())
+    );
+    
     if (code != null && mounted) {
       await Future.delayed(const Duration(milliseconds: 400));
       final database = await DbHelper.db;
@@ -156,7 +165,11 @@ class _InventoryScreenState extends State<InventoryScreen> {
         actions: [
           IconButton(
             icon: const Icon(Icons.history_edu, size: 28),
-            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuditHistoryScreen())).then((_) {
+            onPressed: () => Navigator.push(
+              context, 
+              // CORRECCIÓN: Se quitó el 'const' aquí para evitar error de compilación
+              MaterialPageRoute(builder: (_) => AuditHistoryScreen()) 
+            ).then((_) {
               _refreshList();
               _updateCounters();
             }),
