@@ -4,6 +4,7 @@ import '../controllers/db_helper.dart';
 class AddProductScreen extends StatefulWidget {
   final String? initialCode;
   const AddProductScreen({super.key, this.initialCode});
+  
   @override
   State<AddProductScreen> createState() => _AddProductScreenState();
 }
@@ -19,6 +20,7 @@ class _AddProductScreenState extends State<AddProductScreen> {
   @override
   void initState() {
     super.initState();
+    // Si venimos de un escaneo fallido, pre-llenamos los campos de código
     if (widget.initialCode != null) {
       _barCtrl.text = widget.initialCode!;
       _claveCtrl.text = widget.initialCode!;
@@ -50,13 +52,39 @@ class _AddProductScreenState extends State<AddProductScreen> {
           key: _formKey,
           child: ListView(
             children: [
-              TextFormField(controller: _claveCtrl, decoration: const InputDecoration(labelText: "Clave *"), validator: (v) => v!.isEmpty ? "Requerido" : null),
-              TextFormField(controller: _barCtrl, decoration: const InputDecoration(labelText: "Código de Barras")),
-              TextFormField(controller: _descCtrl, decoration: const InputDecoration(labelText: "Descripción *"), validator: (v) => v!.isEmpty ? "Requerido" : null),
-              TextFormField(controller: _marcaCtrl, decoration: const InputDecoration(labelText: "Marca")),
-              TextFormField(controller: _stockCtrl, decoration: const InputDecoration(labelText: "Stock en Sistema"), keyboardType: TextInputType.number),
+              TextFormField(
+                controller: _claveCtrl, 
+                decoration: const InputDecoration(labelText: "Clave *"), 
+                validator: (v) => v!.isEmpty ? "Requerido" : null
+              ),
+              TextFormField(
+                controller: _barCtrl, 
+                decoration: const InputDecoration(labelText: "Código de Barras")
+              ),
+              TextFormField(
+                controller: _descCtrl, 
+                decoration: const InputDecoration(labelText: "Descripción *"), 
+                validator: (v) => v!.isEmpty ? "Requerido" : null
+              ),
+              TextFormField(
+                controller: _marcaCtrl, 
+                decoration: const InputDecoration(labelText: "Marca")
+              ),
+              TextFormField(
+                controller: _stockCtrl, 
+                decoration: const InputDecoration(labelText: "Stock en Sistema"), 
+                keyboardType: TextInputType.number
+              ),
               const SizedBox(height: 30),
-              ElevatedButton(onPressed: _save, child: const Text("GUARDAR")),
+              ElevatedButton(
+                onPressed: _save, 
+                style: ElevatedButton.styleFrom(
+                  minimumSize: const Size.fromHeight(50),
+                  backgroundColor: Colors.green,
+                  foregroundColor: Colors.white
+                ),
+                child: const Text("GUARDAR")
+              ),
             ],
           ),
         ),

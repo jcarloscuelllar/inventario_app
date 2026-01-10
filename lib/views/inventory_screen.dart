@@ -6,6 +6,7 @@ import 'package:sqflite/sqflite.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 import '../controllers/db_helper.dart';
+import 'audit_history_screen.dart';
 import 'add_product_screen.dart';
 import 'scanner_screen.dart';
 
@@ -33,12 +34,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
     final database = await DbHelper.db;
     final total = Sqflite.firstIntValue(await database.rawQuery('SELECT COUNT(*) FROM products')) ?? 0;
     final contados = Sqflite.firstIntValue(await database.rawQuery('SELECT COUNT(*) FROM products WHERE fisica > 0')) ?? 0;
-    if (mounted) {
-      setState(() {
-        totalItems = total.toDouble();
-        itemsContados = contados.toDouble();
-      });
-    }
+    if (mounted) setState(() {
+      totalItems = total.toDouble();
+      itemsContados = contados.toDouble();
+    });
   }
 
   void _refreshList() async {
@@ -99,7 +98,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                   children: [
                     DropdownButtonFormField<String>(
                       value: zonaSeleccionada,
-                      decoration: const InputDecoration(labelText: 'Área / Zona de conteo'),
+                      decoration: const InputDecoration(labelText: 'Área de conteo'),
                       items: zonas.map((z) => DropdownMenuItem(value: z, child: Text(z))).toList(),
                       onChanged: (val) => setDialogState(() => zonaSeleccionada = val!),
                     ),
@@ -108,7 +107,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       controller: controller,
                       keyboardType: const TextInputType.numberWithOptions(decimal: true),
                       autofocus: true,
-                      decoration: const InputDecoration(labelText: 'Cantidad capturada', border: OutlineInputBorder()),
+                      decoration: const InputDecoration(labelText: 'Cantidad', border: OutlineInputBorder()),
                     ),
                   ],
                 ),
@@ -122,27 +121,10 @@ class _InventoryScreenState extends State<InventoryScreen> {
                         _refreshList();
                         _updateCounters();
                       },
-                      child: const Text('Sumar al Área')),
+                      child: const Text('Sumar')),
                 ],
               ),
         ));
-  }
-
-  Future<void> _importCSV() async {
-    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
-    if (result == null) return;
-    setState(() => isLoading = true);
-    try {
-      final file = File(result.files.single.path!);
-      final content = await file.readAsString();
-      final rows = const CsvToListConverter().convert(content);
-      await DbHelper.insertBatch(rows);
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
-    }
-    setState(() => isLoading = false);
-    _refreshList();
-    _updateCounters();
   }
 
   Future<void> _exportCSV() async {
@@ -153,10 +135,9 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
     String csvString = const ListToCsvConverter().convert(csvData);
     final directory = await getTemporaryDirectory();
-    final path = "${directory.path}/inventario_export.csv";
-    final file = File(path);
+    final file = File("${directory.path}/inventario_general.csv");
     await file.writeAsString(csvString);
-    await Share.shareXFiles([XFile(path)], text: 'Reporte de Inventario');
+    await Share.shareXFiles([XFile(file.path)], text: 'Reporte de Inventario');
   }
 
   @override
@@ -168,12 +149,18 @@ class _InventoryScreenState extends State<InventoryScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const Text('Inventario', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            Text('Total: ${totalItems.toInt()} | Contados: ${itemsContados.toInt()}',
+            Text('Total SKU: ${totalItems.toInt()} | Contados: ${itemsContados.toInt()}',
                 style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w500)),
           ],
         ),
         actions: [
-          IconButton(icon: const Icon(Icons.add_box), onPressed: () => _goToAddProduct()),
+          IconButton(
+            icon: const Icon(Icons.history_edu, size: 28),
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuditHistoryScreen())).then((_) {
+              _refreshList();
+              _updateCounters();
+            }),
+          ),
           IconButton(icon: const Icon(Icons.upload_file), onPressed: _importCSV),
           IconButton(icon: const Icon(Icons.download), onPressed: _exportCSV),
         ],
@@ -220,5 +207,22 @@ class _InventoryScreenState extends State<InventoryScreen> {
         icon: const Icon(Icons.qr_code_scanner),
       ),
     );
+  }
+
+  Future<void> _importCSV() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
+    if (result == null) return;
+    setState(() => isLoading = true);
+    try {
+      final file = File(result.files.single.path!);
+      final content = await file.readAsString();
+      final rows = const CsvToListConverter().convert(content);
+      await DbHelper.insertBatch(rows);
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+    }
+    setState(() => isLoading = false);
+    _refreshList();
+    _updateCounters();
   }
 }

@@ -12,7 +12,7 @@ class DbHelper {
 
   static Future<Database> _initDb() async {
     String path = p.join(await getDatabasesPath(), 'inventory.db');
-    return await openDatabase(path, version: 2,
+    return await openDatabase(path, version: 2, 
         onCreate: (db, version) async {
       await db.execute('''
         CREATE TABLE products (
@@ -50,7 +50,7 @@ class DbHelper {
     final database = await db;
     Batch batch = database.batch();
     batch.delete('products');
-    batch.delete('audit');
+    batch.delete('audit'); 
 
     for (var i = 1; i < rows.length; i++) {
       if (rows[i].length < 6) continue;
@@ -73,11 +73,32 @@ class DbHelper {
       'clave': clave,
       'zona': zona,
       'cantidad': cantidad,
-      'fecha': DateTime.now().toString(),
+      'fecha': DateTime.now().toString().substring(0, 19),
     });
     await database.rawUpdate(
         'UPDATE products SET fisica = fisica + ? WHERE clave = ?',
         [cantidad, clave]);
+  }
+
+  static Future<List<Map<String, dynamic>>> getFullAudit() async {
+    final database = await db;
+    return await database.rawQuery('''
+      SELECT audit.id, audit.fecha, audit.zona, products.descripcion, products.clave, audit.cantidad
+      FROM audit
+      JOIN products ON audit.clave = products.clave
+      ORDER BY audit.fecha DESC
+    ''');
+  }
+
+  static Future<void> eliminarRegistroAuditoria(int id, String clave, double cantidad) async {
+    final database = await db;
+    await database.transaction((txn) async {
+      await txn.rawUpdate(
+        'UPDATE products SET fisica = fisica - ? WHERE clave = ?',
+        [cantidad, clave]
+      );
+      await txn.delete('audit', where: 'id = ?', whereArgs: [id]);
+    });
   }
 
   static Future<List<Map<String, dynamic>>> search(String query) async {

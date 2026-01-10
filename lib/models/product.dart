@@ -16,16 +16,4 @@ class Product {
     required this.existencia,
     this.fisica = 0.0,
   });
-
-  Map<String, dynamic> toMap() {
-    return {
-      'clave': clave,
-      'codbar': codbar,
-      'descripcion': descripcion,
-      'marca': marca,
-      'unit': unit,
-      'existencia': existencia,
-      'fisica': fisica,
-    };
-  }
 }
