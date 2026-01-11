@@ -88,7 +88,23 @@ class DbHelper {
       JOIN products ON audit.clave = products.clave
       ORDER BY audit.fecha DESC
     ''');
+    
   }
+// Aqui puse el exportador
+    
+static Future<List<Map<String, dynamic>>> getAuditForExport() async {
+  final database = await db;
+  // Obtenemos los datos ordenados por fecha
+  return await database.rawQuery('''
+    SELECT audit.fecha, products.clave, products.descripcion, audit.zona, audit.cantidad
+    FROM audit
+    JOIN products ON audit.clave = products.clave
+    ORDER BY audit.fecha DESC
+  ''');
+}
+    
+    
+ 
 
   static Future<void> eliminarRegistroAuditoria(int id, String clave, double cantidad) async {
     final database = await db;

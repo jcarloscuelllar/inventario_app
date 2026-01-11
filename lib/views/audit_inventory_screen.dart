@@ -1,4 +1,8 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
+import 'package:csv/csv.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 import '../controllers/db_helper.dart';
 
 class AuditHistoryScreen extends StatefulWidget {
@@ -22,6 +26,35 @@ class _AuditHistoryScreenState extends State<AuditHistoryScreen> {
     setState(() { _allLogs = data; _filteredLogs = data; });
   }
 
+  // --- ESTA ES LA NUEVA FUNCIÓN DE EXPORTACIÓN ---
+  Future<void> _exportAuditCSV() async {
+    final data = await DbHelper.getAuditForExport();
+    
+    List<List<dynamic>> csvData = [
+      ['Fecha/Hora', 'Clave', 'Producto', 'Área/Zona', 'Cantidad']
+    ];
+
+    for (var row in data) {
+      csvData.add([
+        row['fecha'],
+        row['clave'],
+        row['descripcion'],
+        row['zona'],
+        row['cantidad'],
+      ]);
+    }
+
+    String csvString = const ListToCsvConverter().convert(csvData);
+    final directory = await getTemporaryDirectory();
+    final file = File("${directory.path}/reporte_auditoria_detallado.csv");
+    await file.writeAsString(csvString);
+    
+    await Share.shareXFiles(
+      [XFile(file.path)], 
+      text: 'Historial de Auditoría Detallado'
+    );
+  }
+
   void _filter(String q) {
     setState(() {
       _filteredLogs = _allLogs.where((l) {
@@ -34,7 +67,17 @@ class _AuditHistoryScreenState extends State<AuditHistoryScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Historial por Áreas")),
+      appBar: AppBar(
+        title: const Text("Historial por Áreas"),
+        // --- AQUÍ AÑADIMOS EL BOTÓN EN EL APPBAR ---
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.download),
+            onPressed: _exportAuditCSV,
+            tooltip: "Exportar Historial",
+          ),
+        ],
+      ),
       body: Column(
         children: [
           Padding(
