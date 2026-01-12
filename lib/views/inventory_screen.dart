@@ -136,18 +136,61 @@ class _InventoryScreenState extends State<InventoryScreen> {
         ));
   }
 
-  Future<void> _exportCSV() async {
-    final data = await DbHelper.getAllForExport();
-    List<List<dynamic>> csvData = [['Clave', 'Código', 'Descripción', 'Unidad', 'Marca', 'Existencia', 'Física', 'Diferencia']];
-    for (var p in data) {
-      csvData.add([p['clave'], p['codbar'], p['descripcion'], p['unit'], p['marca'], p['existencia'], p['fisica'], p['fisica'] - p['existencia']]);
+Future<void> _exportCSV() async {
+  // 1. Obtenemos los productos desde el controlador
+  final data = await DbHelper.getAllForExport();
+  
+  // 2. Definimos los encabezados en MAYÚSCULAS
+  List<List<dynamic>> csvData = [
+    ['CLAVE', 'CÓDIGO', 'DESCRIPCIÓN', 'UNIDAD', 'MARCA', 'SISTEMA', 'FÍSICA', 'SOBRANTE', 'FALTANTE']
+  ];
+
+  // 3. Procesamos cada producto
+  for (var p in data) {
+    double stockSistema = p['existencia'] ?? 0.0;
+    double stockFisico = p['fisica'] ?? 0.0;
+    
+    // Aplicamos tu lógica: Física - Sistema
+    double diferencia = stockFisico - stockSistema;
+
+    double sobrante = 0.0;
+    double faltante = 0.0;
+
+    if (diferencia > 0) {
+      // Si es positivo, hay más mercancía que la registrada (Sobrante)
+      sobrante = diferencia;
+    } else if (diferencia < 0) {
+      // Si es negativo, falta mercancía (Faltante)
+      faltante = diferencia.abs(); // Usamos .abs() para que el número sea positivo en el reporte
     }
-    String csvString = const ListToCsvConverter().convert(csvData);
-    final directory = await getTemporaryDirectory();
-    final file = File("${directory.path}/inventario_general.csv");
-    await file.writeAsString(csvString);
-    await Share.shareXFiles([XFile(file.path)], text: 'Reporte de Inventario');
+
+    // Agregamos la fila al CSV
+    csvData.add([
+      p['clave'],
+      p['codbar'],
+      p['descripcion'],
+      p['unit'],
+      p['marca'],
+      stockSistema,
+      stockFisico,
+      sobrante == 0 ? "" : sobrante, // Celda vacía si no hay sobrante
+      faltante == 0 ? "" : faltante,  // Celda vacía si no hay faltante
+    ]);
   }
+
+  // 4. Conversión y guardado
+  String csvString = const ListToCsvConverter().convert(csvData);
+  final directory = await getTemporaryDirectory();
+  final file = File("${directory.path}/inventario_general.csv");
+  await file.writeAsString(csvString);
+  
+  // 5. Compartir archivo
+  await Share.shareXFiles(
+    [XFile(file.path)], 
+    text: 'Reporte de Inventario Final'
+  );
+}
+
 
   @override
   Widget build(BuildContext context) {
