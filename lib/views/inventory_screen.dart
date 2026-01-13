@@ -11,6 +11,7 @@ import '../controllers/db_helper.dart';
 import 'audit_history_screen.dart';
 import 'add_product_screen.dart';
 import 'scanner_screen.dart';
+import 'manual_adjustments_screen.dart';
 
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
@@ -207,7 +208,7 @@ Future<void> _exportCSV() async {
         ),
         actions: [
 IconButton(
-  icon: const Icon(Icons.Balance, size: 28, color: Colors.orange), // Icono de balanza/ajuste
+  icon: const Icon(Icons.balance, size: 28, color: Colors.orange), // Icono de balanza/ajuste
   onPressed: () async {
     // Obtenemos todos los productos para filtrar los que tienen diferencia
     final data = await DbHelper.getAllForExport(); 
