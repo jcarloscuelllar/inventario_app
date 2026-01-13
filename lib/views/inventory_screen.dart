@@ -142,7 +142,7 @@ Future<void> _exportCSV() async {
   
   // 2. Definimos los encabezados en MAYÚSCULAS
   List<List<dynamic>> csvData = [
-    ['CLAVE', 'CÓDIGO', 'DESCRIPCIÓN', 'UNIDAD', 'MARCA', 'SISTEMA', 'FÍSICA', 'SOBRANTE', 'FALTANTE']
+    ['CLAVE', 'CODIGO', 'DESCRIPCION', 'UNIDAD', 'MARCA', 'SISTEMA', 'FISICA', 'SOBRANTE', 'FALTANTE']
   ];
 
   // 3. Procesamos cada producto
@@ -206,6 +206,34 @@ Future<void> _exportCSV() async {
           ],
         ),
         actions: [
+IconButton(
+  icon: const Icon(Icons.Balance, size: 28, color: Colors.orange), // Icono de balanza/ajuste
+  onPressed: () async {
+    // Obtenemos todos los productos para filtrar los que tienen diferencia
+    final data = await DbHelper.getAllForExport(); 
+    final itemsConDiferencia = data.where((p) {
+      double diff = (p['fisica'] ?? 0.0) - (p['existencia'] ?? 0.0);
+      return diff != 0;
+    }).toList();
+
+    if (itemsConDiferencia.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("No hay diferencias para ajustar"))
+      );
+      return;
+    }
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ManualAdjustmentsScreen(initialData: itemsConDiferencia)
+      ),
+    );
+  },
+),
+
+        
+        
           IconButton(
             icon: const Icon(Icons.history_edu, size: 28),
             onPressed: () => Navigator.push(
