@@ -14,6 +14,7 @@ class ManualAdjustmentsScreen extends StatefulWidget {
 }
 
 class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
+  // --- SIGNALS PARA ESTADO REACTIVO ---
   final letraActiva = signal('A');
   final asignaciones = signal<Map<String, String>>({});
   late final List<Map<String, dynamic>> itemsOrdenados;
@@ -24,7 +25,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     super.initState();
     _prepararDatos();
   }
-t
+
   void _prepararDatos() {
     itemsOrdenados = List.from(widget.initialData);
     itemsOrdenados.sort((a, b) {
@@ -32,41 +33,34 @@ t
       if (comp != 0) return comp;
       double diffA = (a['fisica']?.toDouble() ?? 0.0) - (a['existencia']?.toDouble() ?? 0.0);
       double diffB = (b['fisica']?.toDouble() ?? 0.0) - (b['existencia']?.toDouble() ?? 0.0);
-<<<<<<< HEAD
-      return diffB.compareTo(diffA); 
-    });
-  }
-
-  // --- LÓGICA DE CÁLCULO (OBJETO DE RETORNO PARA PDF) ---
-  Map<String, dynamic> _obtenerDetalleAjuste(Map<String, dynamic> p) {
-=======
       return diffB.compareTo(diffA);
     });
   }
 
-  String _calcularRegistro(Map<String, dynamic> p) {
->>>>>>> refs/remotes/origin/main
+  // --- LÓGICA DE CÁLCULO (DESGLOSE PARA UI Y PDF) ---
+  Map<String, dynamic> _obtenerDetalleAjuste(Map<String, dynamic> p) {
     final clave = p['clave'].toString();
     double stockSistema = (p['existencia']?.toDouble() ?? 0.0);
     double stockFisico = (p['fisica']?.toDouble() ?? 0.0);
     double diffOriginal = stockFisico - stockSistema;
-    
+
     final letra = asignaciones.value[clave];
-<<<<<<< HEAD
     if (letra == null) {
-      return {'texto': "${diffOriginal > 0 ? '+' : ''}${diffOriginal.toInt()}", 'ajuste': 0.0, 'residuo': diffOriginal, 'letra': ''};
+      return {
+        'texto': "${diffOriginal > 0 ? '+' : ''}${diffOriginal.toInt()}",
+        'ajuste': 0.0,
+        'residuo': diffOriginal,
+        'letra': ''
+      };
     }
-=======
-    if (letra == null) return "${diffOriginal > 0 ? '+' : ''}${diffOriginal.toInt()}";
->>>>>>> refs/remotes/origin/main
 
     double saldoOtros = 0;
-    asignaciones.value.forEach((c, l) {
-      if (l == letra && c != clave) {
-        final item = widget.initialData.firstWhere((i) => i['clave'].toString() == c);
+    for (var entry in asignaciones.value.entries) {
+      if (entry.value == letra && entry.key != clave) {
+        final item = widget.initialData.firstWhere((i) => i['clave'].toString() == entry.key);
         saldoOtros += (item['fisica']?.toDouble() ?? 0.0) - (item['existencia']?.toDouble() ?? 0.0);
       }
-    });
+    }
 
     double ajuste;
     if (diffOriginal > 0) {
@@ -80,23 +74,19 @@ t
 
     double residuo = diffOriginal - ajuste;
     String rStr = residuo == 0 ? "" : "${residuo > 0 ? '+' : ''}${residuo.toInt()} ";
-    String aStr = "${ajuste > 0 ? '+' : ''}${ajuste.toInt()}$letra";
+    String aStr = (ajuste == 0) ? "" : "${ajuste > 0 ? '+' : ''}${ajuste.toInt()}$letra";
 
     return {
-      'texto': (ajuste == 0) ? rStr.trim() : "$rStr$aStr".trim(),
+      'texto': "$rStr$aStr".trim(),
       'ajuste': ajuste,
       'residuo': residuo,
       'letra': letra
     };
   }
 
-<<<<<<< HEAD
-  // --- GENERACIÓN DE REPORTE PDF CON RECLASIFICACIÓN ---
-=======
->>>>>>> refs/remotes/origin/main
+  // --- GENERACIÓN DE REPORTE PDF ---
   Future<void> _exportarPDF() async {
     final pdf = pw.Document();
-    
     List<Map<String, dynamic>> tMatch = [];
     List<Map<String, dynamic>> tSobrante = [];
     List<Map<String, dynamic>> tFaltante = [];
@@ -106,7 +96,6 @@ t
       final double ajuste = detalle['ajuste'];
       final double residuo = detalle['residuo'];
 
-      // 1. Si hubo intercambio (Match), se va a la Tabla 1
       if (ajuste != 0) {
         tMatch.add({
           'clave': p['clave'],
@@ -115,50 +104,28 @@ t
         });
       }
 
-      // 2. El residuo (lo que no se pudo ajustar) se clasifica como Sobrante o Faltante Neto
       if (residuo != 0) {
-        final rowResiduo = {
+        final row = {
           'clave': p['clave'],
           'ajuste': "${residuo > 0 ? '+' : ''}${residuo.toInt()}",
           'desc': p['descripcion'],
         };
-        if (residuo > 0) {
-          tSobrante.add(rowResiduo);
-        } else {
-          tFaltante.add(rowResiduo);
-        }
+        residuo > 0 ? tSobrante.add(row) : tFaltante.add(row);
       }
     }
 
     pdf.addPage(pw.MultiPage(
-<<<<<<< HEAD
       pageFormat: PdfPageFormat.letter.landscape,
       build: (context) => [
-        pw.Header(level: 0, child: pw.Text("AJUSTES DEL INVENTARIO")),
-        _buildPdfTable("AJUSTE UNO POR OTRO", tMatch, PdfColors.blue900),
-        _buildPdfTable("AJUSTE POR SOBRANTE DE MERCANCIA", tSobrante, PdfColors.green900),
-        _buildPdfTable("AJUSTE POR SOBRANTE DE MERCANCIA", tFaltante, PdfColors.red900),
+        pw.Header(level: 0, child: pw.Text("AJUSTES DE INVENTARIO")),
+        _buildPdfTable("1. AJUSTES UNO POR OTRO", tMatch, PdfColors.blue900),
+        _buildPdfTable("2. AJUSTES POR SOBRANTE DE MERCANCIA", tSobrante, PdfColors.green900),
+        _buildPdfTable("3. AJUSTE POR FALTANTE DE MERCANCIA", tFaltante, PdfColors.red900),
         pw.SizedBox(height: 50),
         pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceAround, children: [
-          _buildFirma("INVENTARISTA"),
-          _buildFirma("GERENCIA"),
+          _buildFirma("Firma Inventarista"),
+           _buildFirma("Firma Gerencia"),
         ])
-=======
-      pageFormat: PdfPageFormat.letter.landscape, // CORREGIDO: Propiedad, no método
-      build: (context) => [
-        pw.Header(level: 0, child: pw.Text("REPORTE DE AUDITORIA Y CONCILIACION")),
-        _buildPdfTable("1. AJUSTES POR INTERCAMBIO (UNO POR OTRO)", tMatch, PdfColors.blue900),
-        _buildPdfTable("2. AJUSTES POR SOBRANTE (CARGOS)", tSobrante, PdfColors.green900),
-        _buildPdfTable("3. AJUSTES POR FALTANTE (DESCARGOS)", tFaltante, PdfColors.red900),
-        pw.SizedBox(height: 50),
-        pw.Row(
-          mainAxisAlignment: pw.MainAxisAlignment.spaceAround,
-          children: [
-            _buildFirma("Firma Auditor"),
-            _buildFirma("Firma Almacen"),
-          ]
-        )
->>>>>>> refs/remotes/origin/main
       ],
     ));
 
@@ -167,14 +134,13 @@ t
 
   pw.Widget _buildPdfTable(String titulo, List<Map<String, dynamic>> data, PdfColor color) {
     if (data.isEmpty) return pw.SizedBox();
-<<<<<<< HEAD
     return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
       pw.Padding(
         padding: const pw.EdgeInsets.only(top: 15, bottom: 5),
         child: pw.Text(titulo, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: color)),
       ),
       pw.TableHelper.fromTextArray(
-        headers: ['CLAVE', 'CANTIDAD/AJUSTE', 'DESCRIPCION'],
+        headers: ['CLAVE', 'AJUSTE', 'DESCRIPCION'],
         data: data.map((i) => [i['clave'], i['ajuste'], i['desc']]).toList(),
         headerDecoration: pw.BoxDecoration(color: color),
         headerStyle: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 10),
@@ -182,44 +148,11 @@ t
         columnWidths: {2: const pw.FixedColumnWidth(300)},
       ),
     ]);
-=======
-    return pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start, // CORREGIDO: Nombre completo
-      children: [
-        pw.Padding(
-          padding: const pw.EdgeInsets.only(top: 15, bottom: 5),
-          child: pw.Text(titulo, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: color)),
-        ),
-        pw.TableHelper.fromTextArray(
-          headers: ['CLAVE', 'REGISTRO', 'DESCRIPCION', 'SIS', 'FIS', 'SOB', 'FAL'],
-          data: data.map((i) => [
-            i['clave'], i['ajuste'], i['desc'], i['sis'], i['fis'], 
-            i['sob'] == 0 ? '' : i['sob'], 
-            i['fal'] == 0 ? '' : i['fal']
-          ]).toList(),
-          headerDecoration: pw.BoxDecoration(color: color),
-          headerStyle: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 10),
-          cellStyle: const pw.TextStyle(fontSize: 9),
-          cellHeight: 18,
-          columnWidths: {2: const pw.FixedColumnWidth(220)},
-        ),
-      ],
-    );
->>>>>>> refs/remotes/origin/main
   }
 
   pw.Widget _buildFirma(String texto) {
     return pw.Column(children: [
-<<<<<<< HEAD
       pw.Container(width: 150, decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide()))),
-=======
-      pw.Container(
-        width: 150, 
-        decoration: const pw.BoxDecoration( // CORREGIDO: Uso de BoxDecoration para bordes
-          border: pw.Border(top: pw.BorderSide())
-        )
-      ),
->>>>>>> refs/remotes/origin/main
       pw.Text(texto, style: const pw.TextStyle(fontSize: 10)),
     ]);
   }
@@ -236,7 +169,7 @@ t
             tooltip: 'Limpiar Todo',
           ),
           IconButton(
-            icon: const Icon(Icons.picture_as_pdf), 
+            icon: const Icon(Icons.picture_as_pdf),
             onPressed: _exportarPDF,
           ),
         ],
@@ -288,6 +221,7 @@ t
                     asignaciones.value = nuevoMapa;
                   },
                 ),
+                const Divider(height: 1),
               ],
             );
           });
@@ -300,7 +234,6 @@ t
     return Container(
       padding: const EdgeInsets.symmetric(vertical: 8),
       color: Colors.white,
-<<<<<<< HEAD
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -318,18 +251,6 @@ t
             }),
           )).toList(),
         ),
-=======
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: ['A', 'B', 'C', 'D', 'E'].map((l) => Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: ChoiceChip(
-            label: Text("Letra $l"),
-            selected: letraActiva.watch(context) == l,
-            onSelected: (_) => letraActiva.value = l,
-          ),
-        )).toList(),
->>>>>>> refs/remotes/origin/main
       ),
     );
   }
