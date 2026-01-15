@@ -14,7 +14,6 @@ class ManualAdjustmentsScreen extends StatefulWidget {
 }
 
 class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
-  // --- SIGNALS PARA ESTADO REACTIVO ---
   final letraActiva = signal('A');
   final asignaciones = signal<Map<String, String>>({});
   late final List<Map<String, dynamic>> itemsOrdenados;
@@ -37,7 +36,6 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     });
   }
 
-  // --- LÓGICA DE CÁLCULO (DESGLOSE PARA UI Y PDF) ---
   Map<String, dynamic> _obtenerDetalleAjuste(Map<String, dynamic> p) {
     final clave = p['clave'].toString();
     double stockSistema = (p['existencia']?.toDouble() ?? 0.0);
@@ -84,7 +82,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     };
   }
 
-  // --- GENERACIÓN DE REPORTE PDF ---
+  // --- REPORTE PDF MODIFICADO CON 7 COLUMNAS ---
   Future<void> _exportarPDF() async {
     final pdf = pw.Document();
     List<Map<String, dynamic>> tMatch = [];
@@ -95,36 +93,45 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
       final detalle = _obtenerDetalleAjuste(p);
       final double ajuste = detalle['ajuste'];
       final double residuo = detalle['residuo'];
+      
+      final int sis = (p['existencia']?.toInt() ?? 0);
+      final int fis = (p['fisica']?.toInt() ?? 0);
+
+      // Función para crear la fila con el nuevo desglose
+      Map<String, String> dataFila(String regStr, double valorDiferencia) {
+        return {
+          'clave': p['clave'].toString(),
+          'reg': regStr,
+          'desc': p['descripcion'].toString(),
+          'sis': sis.toString(),
+          'fis': fis.toString(),
+          'sob': valorDiferencia > 0 ? valorDiferencia.toInt().toString() : '',
+          'fal': valorDiferencia < 0 ? valorDiferencia.abs().toInt().toString() : '',
+        };
+      }
 
       if (ajuste != 0) {
-        tMatch.add({
-          'clave': p['clave'],
-          'ajuste': "${ajuste > 0 ? '+' : ''}${ajuste.toInt()}${detalle['letra']}",
-          'desc': p['descripcion'],
-        });
+        tMatch.add(dataFila("${ajuste > 0 ? '+' : ''}${ajuste.toInt()}${detalle['letra']}", ajuste));
       }
 
       if (residuo != 0) {
-        final row = {
-          'clave': p['clave'],
-          'ajuste': "${residuo > 0 ? '+' : ''}${residuo.toInt()}",
-          'desc': p['descripcion'],
-        };
-        residuo > 0 ? tSobrante.add(row) : tFaltante.add(row);
+        final fila = dataFila("${residuo > 0 ? '+' : ''}${residuo.toInt()}", residuo);
+        residuo > 0 ? tSobrante.add(fila) : tFaltante.add(fila);
       }
     }
 
     pdf.addPage(pw.MultiPage(
       pageFormat: PdfPageFormat.letter.landscape,
+      margin: const pw.EdgeInsets.all(25),
       build: (context) => [
-        pw.Header(level: 0, child: pw.Text("AJUSTES DE INVENTARIO")),
-        _buildPdfTable("1. AJUSTES UNO POR OTRO", tMatch, PdfColors.blue900),
-        _buildPdfTable("2. AJUSTES POR SOBRANTE DE MERCANCIA", tSobrante, PdfColors.green900),
-        _buildPdfTable("3. AJUSTE POR FALTANTE DE MERCANCIA", tFaltante, PdfColors.red900),
-        pw.SizedBox(height: 50),
+        pw.Header(level: 0, child: pw.Text("REPORTE DETALLADO DE AUDITORIA Y CONCILIACION")),
+        _buildPdfTable("1. AJUSTES POR INTERCAMBIO (MATCH)", tMatch, PdfColors.blue900),
+        _buildPdfTable("2. AJUSTES POR SOBRANTE (CARGOS)", tSobrante, PdfColors.green900),
+        _buildPdfTable("3. AJUSTES POR FALTANTE (DESCARGOS)", tFaltante, PdfColors.red900),
+        pw.SizedBox(height: 40),
         pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceAround, children: [
-          _buildFirma("Firma Inventarista"),
-           _buildFirma("Firma Gerencia"),
+          _buildFirma("Firma Auditor / Inventarista"),
+          _buildFirma("Firma Almacen / Gerencia"),
         ])
       ],
     ));
@@ -137,23 +144,36 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
       pw.Padding(
         padding: const pw.EdgeInsets.only(top: 15, bottom: 5),
-        child: pw.Text(titulo, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: color)),
+        child: pw.Text(titulo, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: color, fontSize: 10)),
       ),
       pw.TableHelper.fromTextArray(
-        headers: ['CLAVE', 'AJUSTE', 'DESCRIPCION'],
-        data: data.map((i) => [i['clave'], i['ajuste'], i['desc']]).toList(),
+        headers: ['CLAVE', 'REGISTRO', 'DESCRIPCION', 'SIS', 'FIS', 'SOB', 'FAL'],
+        data: data.map((i) => [
+          i['clave'], i['reg'], i['desc'], i['sis'], i['fis'], i['sob'], i['fal']
+        ]).toList(),
         headerDecoration: pw.BoxDecoration(color: color),
-        headerStyle: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 10),
-        cellStyle: const pw.TextStyle(fontSize: 9),
-        columnWidths: {2: const pw.FixedColumnWidth(300)},
+        headerStyle: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 8),
+        cellStyle: const pw.TextStyle(fontSize: 8),
+        columnWidths: {
+          0: const pw.FlexColumnWidth(1.5), // Clave
+          1: const pw.FlexColumnWidth(1.5), // Registro
+          2: const pw.FlexColumnWidth(5),   // Descripcion
+          3: const pw.FlexColumnWidth(1),   // Sis
+          4: const pw.FlexColumnWidth(1),   // Fis
+          5: const pw.FlexColumnWidth(1),   // Sob
+          6: const pw.FlexColumnWidth(1),   // Fal
+        },
+        cellAlignment: pw.Alignment.centerLeft,
+        headerAlignment: pw.Alignment.center,
       ),
     ]);
   }
 
   pw.Widget _buildFirma(String texto) {
     return pw.Column(children: [
-      pw.Container(width: 150, decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide()))),
-      pw.Text(texto, style: const pw.TextStyle(fontSize: 10)),
+      pw.Container(width: 160, decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide()))),
+      pw.SizedBox(height: 4),
+      pw.Text(texto, style: const pw.TextStyle(fontSize: 9)),
     ]);
   }
 
@@ -166,7 +186,6 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
           IconButton(
             icon: const Icon(Icons.delete_sweep, color: Colors.redAccent),
             onPressed: () => asignaciones.value = {},
-            tooltip: 'Limpiar Todo',
           ),
           IconButton(
             icon: const Icon(Icons.picture_as_pdf),
