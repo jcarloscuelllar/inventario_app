@@ -24,7 +24,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     super.initState();
     _prepararDatos();
   }
-
+t
   void _prepararDatos() {
     itemsOrdenados = List.from(widget.initialData);
     itemsOrdenados.sort((a, b) {
