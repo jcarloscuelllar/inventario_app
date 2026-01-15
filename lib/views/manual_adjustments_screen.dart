@@ -27,13 +27,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
 
   void _prepararDatos() {
     itemsOrdenados = List.from(widget.initialData);
-    itemsOrdenados.sort((a, b) {
-      int comp = a['descripcion'].toString().compareTo(b['descripcion'].toString());
-      if (comp != 0) return comp;
-      double diffA = (a['fisica']?.toDouble() ?? 0.0) - (a['existencia']?.toDouble() ?? 0.0);
-      double diffB = (b['fisica']?.toDouble() ?? 0.0) - (b['existencia']?.toDouble() ?? 0.0);
-      return diffB.compareTo(diffA);
-    });
+    itemsOrdenados.sort((a, b) => a['descripcion'].toString().compareTo(b['descripcion'].toString()));
   }
 
   Map<String, dynamic> _obtenerDetalleAjuste(Map<String, dynamic> p) {
@@ -82,7 +76,6 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     };
   }
 
-  // --- REPORTE PDF MODIFICADO CON 7 COLUMNAS ---
   Future<void> _exportarPDF() async {
     final pdf = pw.Document();
     List<Map<String, dynamic>> tMatch = [];
@@ -93,12 +86,10 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
       final detalle = _obtenerDetalleAjuste(p);
       final double ajuste = detalle['ajuste'];
       final double residuo = detalle['residuo'];
-      
       final int sis = (p['existencia']?.toInt() ?? 0);
       final int fis = (p['fisica']?.toInt() ?? 0);
 
-      // Función para crear la fila con el nuevo desglose
-      Map<String, String> dataFila(String regStr, double valorDiferencia) {
+      Map<String, dynamic> dataFila(String regStr, double valorDiferencia, String letra) {
         return {
           'clave': p['clave'].toString(),
           'reg': regStr,
@@ -107,31 +98,46 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
           'fis': fis.toString(),
           'sob': valorDiferencia > 0 ? valorDiferencia.toInt().toString() : '',
           'fal': valorDiferencia < 0 ? valorDiferencia.abs().toInt().toString() : '',
+          'letra': letra,
+          'valor': valorDiferencia, // Para ordenamiento
         };
       }
 
       if (ajuste != 0) {
-        tMatch.add(dataFila("${ajuste > 0 ? '+' : ''}${ajuste.toInt()}${detalle['letra']}", ajuste));
+        tMatch.add(dataFila("${ajuste > 0 ? '+' : ''}${ajuste.toInt()}${detalle['letra']}", ajuste, detalle['letra']));
       }
 
       if (residuo != 0) {
-        final fila = dataFila("${residuo > 0 ? '+' : ''}${residuo.toInt()}", residuo);
+        final fila = dataFila("${residuo > 0 ? '+' : ''}${residuo.toInt()}", residuo, "");
         residuo > 0 ? tSobrante.add(fila) : tFaltante.add(fila);
       }
     }
+
+    // --- ORDENAMIENTO ESPECIAL TABLA 1 (MATCH) ---
+    // 1. Por Letra (A, B, C...)
+    // 2. Por Valor (Sobrantes primero que faltantes: + antes que -)
+    tMatch.sort((a, b) {
+      int compLetra = a['letra'].compareTo(b['letra']);
+      if (compLetra != 0) return compLetra;
+      return (b['valor'] as double).compareTo(a['valor'] as double);
+    });
+
+    // --- ORDENAMIENTO POR DESCRIPCIÓN PARA LAS OTRAS TABLAS ---
+    tSobrante.sort((a, b) => a['desc'].compareTo(b['desc']));
+    tFaltante.sort((a, b) => a['desc'].compareTo(b['desc']));
 
     pdf.addPage(pw.MultiPage(
       pageFormat: PdfPageFormat.letter.landscape,
       margin: const pw.EdgeInsets.all(25),
       build: (context) => [
-        pw.Header(level: 0, child: pw.Text("REPORTE DETALLADO DE AUDITORIA Y CONCILIACION")),
-        _buildPdfTable("1. AJUSTES POR INTERCAMBIO (MATCH)", tMatch, PdfColors.blue900),
-        _buildPdfTable("2. AJUSTES POR SOBRANTE (CARGOS)", tSobrante, PdfColors.green900),
-        _buildPdfTable("3. AJUSTES POR FALTANTE (DESCARGOS)", tFaltante, PdfColors.red900),
+        pw.Header(level: 0, child: pw.Text("AJUSTES DE INVENTARIO")),
+        _buildPdfTable("1. AJUSTE UNO POR OTRO", tMatch, PdfColors.blue900),
+        _buildPdfTable("2. AJUSTE POR SOBRANTE DE MERCANCIA", tSobrante, PdfColors.green900),
+        _buildPdfTable("3. AJUSTE POR FALTANTE DE MERCANCIA", tFaltante, PdfColors.red900),
         pw.SizedBox(height: 40),
         pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceAround, children: [
-          _buildFirma("Firma Auditor / Inventarista"),
-          _buildFirma("Firma Almacen / Gerencia"),
+          _buildFirma("Inventarista"),
+          _buildFirma("Gerencia"),
         ])
       ],
     ));
@@ -155,13 +161,13 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
         headerStyle: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 8),
         cellStyle: const pw.TextStyle(fontSize: 8),
         columnWidths: {
-          0: const pw.FlexColumnWidth(1.5), // Clave
-          1: const pw.FlexColumnWidth(1.5), // Registro
-          2: const pw.FlexColumnWidth(5),   // Descripcion
-          3: const pw.FlexColumnWidth(1),   // Sis
-          4: const pw.FlexColumnWidth(1),   // Fis
-          5: const pw.FlexColumnWidth(1),   // Sob
-          6: const pw.FlexColumnWidth(1),   // Fal
+          0: const pw.FlexColumnWidth(1.5),
+          1: const pw.FlexColumnWidth(1.5),
+          2: const pw.FlexColumnWidth(5),
+          3: const pw.FlexColumnWidth(1),
+          4: const pw.FlexColumnWidth(1),
+          5: const pw.FlexColumnWidth(1),
+          6: const pw.FlexColumnWidth(1),
         },
         cellAlignment: pw.Alignment.centerLeft,
         headerAlignment: pw.Alignment.center,
@@ -181,7 +187,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Conciliación Pro"),
+        title: const Text("Ajustes"),
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_sweep, color: Colors.redAccent),
