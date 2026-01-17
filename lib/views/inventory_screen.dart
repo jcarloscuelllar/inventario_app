@@ -13,6 +13,7 @@ import 'add_product_screen.dart';
 import 'scanner_screen.dart';
 import 'manual_adjustments_screen.dart';
 
+
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
   @override
@@ -25,6 +26,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   bool isLoading = false;
   double totalItems = 0;
   double itemsContados = 0;
+  bool filterPending = false;
 
   @override
   void initState() {
@@ -46,7 +48,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
   }
 
   void _refreshList() async {
-    final data = await DbHelper.search(_searchController.text);
+    final data = await DbHelper.search(_searchController.text, onlyPending: filterPending);
     if (mounted) setState(() => displayedProducts = data);
   }
 
@@ -207,6 +209,21 @@ Future<void> _exportCSV() async {
           ],
         ),
         actions: [
+        
+IconButton(
+  icon: Icon(
+    filterPending ? Icons.pending_actions : Icons.list_alt,
+    color: filterPending ? Colors.orangeAccent : null,
+  ),
+  tooltip: filterPending ? 'Viendo pendientes' : 'Viendo todos',
+  onPressed: () {
+    setState(() {
+      filterPending = !filterPending; // Cambia el switch
+    });
+    _refreshList(); // Refresca con el nuevo filtro
+  },
+),
+        
 IconButton(
   icon: const Icon(Icons.balance, size: 28, color: Colors.orange), // Icono de balanza/ajuste
   onPressed: () async {
@@ -272,6 +289,8 @@ IconButton(
               itemBuilder: (context, i) {
                 final p = displayedProducts[i];
                 return Card(
+                // Si fisica > 0, ponemos un fondo verde muy tenue, si no, blanco.
+                   color: p['fisica'] > 0 ? Colors.green[50] : Colors.white,
                   margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   child: ListTile(
                     title: Text(p['descripcion'], style: const TextStyle(fontWeight: FontWeight.bold)),

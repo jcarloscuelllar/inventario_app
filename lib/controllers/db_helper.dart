@@ -117,14 +117,28 @@ static Future<List<Map<String, dynamic>>> getAuditForExport() async {
     });
   }
 
-  static Future<List<Map<String, dynamic>>> search(String query) async {
+  static Future<List<Map<String, dynamic>>> search(String query, {bool onlyPending = false}) async {
     final database = await db;
-    if (query.isEmpty) return await database.query('products', limit: 100);
-    return await database.query('products',
-        where: 'descripcion LIKE ? OR clave LIKE ? OR codbar LIKE ? OR marca LIKE ?',
-        whereArgs: ['%$query%', '%$query%', '%$query%', '%$query%'],
-        limit: 100);
+
+    // 1. Definimos la base (SIEMPRE se ejecuta)
+    String whereClause = "(descripcion LIKE ? OR clave LIKE ? OR codbar LIKE ? OR marca LIKE ?)";
+    List<dynamic> whereArgs = ['%$query%', '%$query%', '%$query%', '%$query%'];
+    
+    // 2. Agregamos el filtro EXTRA solo si se solicita
+    if (onlyPending) {
+      whereClause += " AND (fisica <= 0 OR fisica IS NULL)";
+    }
+
+    // 3. Retornamos el resultado final
+    return await database.query(
+      'products',
+      where: whereClause,
+      whereArgs: whereArgs,
+      orderBy: 'descripcion ASC',
+      limit: 150,
+    );
   }
+
 
   static Future<List<Map<String, dynamic>>> getAllForExport() async {
     final database = await db;
