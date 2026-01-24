@@ -13,7 +13,6 @@ import 'add_product_screen.dart';
 import 'scanner_screen.dart';
 import 'manual_adjustments_screen.dart';
 
-
 class InventoryScreen extends StatefulWidget {
   const InventoryScreen({super.key});
   @override
@@ -21,6 +20,8 @@ class InventoryScreen extends StatefulWidget {
 }
 
 class _InventoryScreenState extends State<InventoryScreen> {
+  // --- VARIABLES DE ESTADO ---
+  // Almacenan los productos cargados, el texto de búsqueda y el estado de la UI
   List<Map<String, dynamic>> displayedProducts = [];
   final TextEditingController _searchController = TextEditingController();
   bool isLoading = false;
@@ -31,10 +32,12 @@ class _InventoryScreenState extends State<InventoryScreen> {
   @override
   void initState() {
     super.initState();
-    _refreshList();
-    _updateCounters();
+    _refreshList(); // Carga inicial de datos
+    _updateCounters(); // Inicializa los contadores de la parte superior
   }
 
+  // --- LÓGICA DE CONTADORES ---
+  // Consulta la base de datos para obtener el total de SKUs y cuántos llevan conteo físico
   void _updateCounters() async {
     final database = await DbHelper.db;
     final total = Sqflite.firstIntValue(await database.rawQuery('SELECT COUNT(*) FROM products')) ?? 0;
@@ -47,13 +50,16 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
   }
 
+  // --- REFRESCAR LISTADO ---
+  // Llama al controlador para obtener los productos basados en el buscador y el filtro de pendientes
   void _refreshList() async {
     final data = await DbHelper.search(_searchController.text, onlyPending: filterPending);
     if (mounted) setState(() => displayedProducts = data);
   }
 
+  // --- LÓGICA DE ESCANEO ---
+  // Abre la cámara y procesa el código obtenido buscando en la DB
   void _onScan() async {
-    // IMPORTANTE: Se quitó el const de la navegación
     final code = await Navigator.push<String>(
       context, 
       MaterialPageRoute(builder: (_) => const ScannerScreen())
@@ -71,6 +77,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
     }
   }
 
+  // Diálogo informativo cuando un producto escaneado no existe
   void _showNotFoundDialog(String code) {
     showDialog(
         context: context,
@@ -89,12 +96,15 @@ class _InventoryScreenState extends State<InventoryScreen> {
             ));
   }
 
+  // Navegación a la pantalla de agregar producto nuevo
   void _goToAddProduct([String? initialCode]) async {
     await Navigator.push(context, MaterialPageRoute(builder: (_) => AddProductScreen(initialCode: initialCode)));
     _refreshList();
     _updateCounters();
   }
 
+  // --- DIÁLOGO DE CONTEO (MODIFICADO) ---
+  // Se adaptó para incluir información detallada del producto antes del formulario
   void _showConteoDialog(Map<String, dynamic> product) {
     final controller = TextEditingController();
     String zonaSeleccionada = 'Piso de Venta';
@@ -105,25 +115,41 @@ class _InventoryScreenState extends State<InventoryScreen> {
         builder: (ctx) => StatefulBuilder(
           builder: (context, setDialogState) => AlertDialog(
                 title: Text(product['descripcion']),
-                content: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    DropdownButtonFormField<String>(
-                      value: zonaSeleccionada,
-                      decoration: const InputDecoration(labelText: 'Área de conteo'),
-                      items: zonas.map((z) => DropdownMenuItem(value: z, child: Text(z))).toList(),
-                      onChanged: (val) => setDialogState(() => zonaSeleccionada = val!),
-                    ),
-                    const SizedBox(height: 15),
-                    TextField(
-                      controller: controller,
-                      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                      autofocus: true,
-                      decoration: const InputDecoration(labelText: 'Cantidad', border: OutlineInputBorder()),
-                    ),
-                  ],
+                content: SingleChildScrollView( // MODIFICACIÓN: Scroll de seguridad
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start, // MODIFICACIÓN: Alineación izquierda
+                    children: [
+                      // MODIFICACIÓN: Bloque de detalles del producto
+                      Text("UPC: ${product['codbar']}", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13)),
+                      Text("Clave: ${product['clave']}", style: const TextStyle(fontSize: 13)),
+                      Text("Unidad: ${product['unit'] ?? product['unidad']}", style: const TextStyle(fontSize: 13)),
+                      Text("Marca: ${product['marca']}", style: const TextStyle(fontSize: 13)),
+                      
+                      const Divider(), // MODIFICACIÓN: Línea divisoria decorativa
+                      const SizedBox(height: 10),
+
+                      DropdownButtonFormField<String>(
+                        value: zonaSeleccionada,
+                        decoration: const InputDecoration(labelText: 'Área de conteo'),
+                        items: zonas.map((z) => DropdownMenuItem(value: z, child: Text(z))).toList(),
+                        onChanged: (val) => setDialogState(() => zonaSeleccionada = val!),
+                      ),
+                      const SizedBox(height: 15),
+                      TextField(
+                        controller: controller,
+                        keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                        autofocus: true,
+                        decoration: const InputDecoration(
+                          labelText: 'Cantidad', 
+                          border: OutlineInputBorder()
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
                 actions: [
+                  // Lógica de guardado del conteo
                   TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cerrar')),
                   ElevatedButton(
                       onPressed: () async {
@@ -139,62 +165,44 @@ class _InventoryScreenState extends State<InventoryScreen> {
         ));
   }
 
-Future<void> _exportCSV() async {
-  // 1. Obtenemos los productos desde el controlador
-  final data = await DbHelper.getAllForExport();
-  
-  // 2. Definimos los encabezados en MAYÚSCULAS
-  List<List<dynamic>> csvData = [
-    ['CLAVE', 'CODIGO', 'DESCRIPCION', 'UNIDAD', 'MARCA', 'SISTEMA', 'FISICA', 'SOBRANTE', 'FALTANTE']
-  ];
+  // --- EXPORTAR CSV ---
+  // Genera un archivo con los resultados finales, incluyendo cálculos de sobrantes y faltantes
+  Future<void> _exportCSV() async {
+    final data = await DbHelper.getAllForExport();
+    List<List<dynamic>> csvData = [
+      ['CLAVE', 'CODIGO', 'DESCRIPCION', 'UNIDAD', 'MARCA', 'SISTEMA', 'FISICA', 'SOBRANTE', 'FALTANTE']
+    ];
 
-  // 3. Procesamos cada producto
-  for (var p in data) {
-    double stockSistema = p['existencia'] ?? 0.0;
-    double stockFisico = p['fisica'] ?? 0.0;
-    
-    // Aplicamos tu lógica: Física - Sistema
-    double diferencia = stockFisico - stockSistema;
+    for (var p in data) {
+      double stockSistema = p['existencia'] ?? 0.0;
+      double stockFisico = p['fisica'] ?? 0.0;
+      double diferencia = stockFisico - stockSistema;
 
-    double sobrante = 0.0;
-    double faltante = 0.0;
+      double sobrante = 0.0;
+      double faltante = 0.0;
 
-    if (diferencia > 0) {
-      // Si es positivo, hay más mercancía que la registrada (Sobrante)
-      sobrante = diferencia;
-    } else if (diferencia < 0) {
-      // Si es negativo, falta mercancía (Faltante)
-      faltante = diferencia.abs(); // Usamos .abs() para que el número sea positivo en el reporte
+      if (diferencia > 0) {
+        sobrante = diferencia;
+      } else if (diferencia < 0) {
+        faltante = diferencia.abs();
+      }
+
+      csvData.add([
+        p['clave'], p['codbar'], p['descripcion'], p['unit'], p['marca'],
+        stockSistema, stockFisico,
+        sobrante == 0 ? "" : sobrante,
+        faltante == 0 ? "" : faltante,
+      ]);
     }
 
-    // Agregamos la fila al CSV
-    csvData.add([
-      p['clave'],
-      p['codbar'],
-      p['descripcion'],
-      p['unit'],
-      p['marca'],
-      stockSistema,
-      stockFisico,
-      sobrante == 0 ? "" : sobrante, // Celda vacía si no hay sobrante
-      faltante == 0 ? "" : faltante,  // Celda vacía si no hay faltante
-    ]);
+    String csvString = const ListToCsvConverter().convert(csvData);
+    final directory = await getTemporaryDirectory();
+    final file = File("${directory.path}/inventario_general.csv");
+    await file.writeAsString(csvString);
+    await Share.shareXFiles([XFile(file.path)], text: 'Reporte de Inventario Final');
   }
 
-  // 4. Conversión y guardado
-  String csvString = const ListToCsvConverter().convert(csvData);
-  final directory = await getTemporaryDirectory();
-  final file = File("${directory.path}/inventario_general.csv");
-  await file.writeAsString(csvString);
-  
-  // 5. Compartir archivo
-  await Share.shareXFiles(
-    [XFile(file.path)], 
-    text: 'Reporte de Inventario Final'
-  );
-}
-
-
+  // --- INTERFAZ DE USUARIO ---
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -209,56 +217,41 @@ Future<void> _exportCSV() async {
           ],
         ),
         actions: [
-        
-IconButton(
-  icon: Icon(
-    filterPending ? Icons.pending_actions : Icons.list_alt,
-    color: filterPending ? Colors.orangeAccent : null,
-  ),
-  tooltip: filterPending ? 'Viendo pendientes' : 'Viendo todos',
-  onPressed: () {
-    setState(() {
-      filterPending = !filterPending; // Cambia el switch
-    });
-    _refreshList(); // Refresca con el nuevo filtro
-  },
-),
-        
-IconButton(
-  icon: const Icon(Icons.balance, size: 28, color: Colors.orange), // Icono de balanza/ajuste
-  onPressed: () async {
-    // Obtenemos todos los productos para filtrar los que tienen diferencia
-    final data = await DbHelper.getAllForExport(); 
-    final itemsConDiferencia = data.where((p) {
-      double diff = (p['fisica'] ?? 0.0) - (p['existencia'] ?? 0.0);
-      return diff != 0;
-    }).toList();
+          // Botón para filtrar productos pendientes
+          IconButton(
+            icon: Icon(
+              filterPending ? Icons.pending_actions : Icons.list_alt,
+              color: filterPending ? Colors.orangeAccent : null,
+            ),
+            tooltip: filterPending ? 'Viendo pendientes' : 'Viendo todos',
+            onPressed: () {
+              setState(() => filterPending = !filterPending);
+              _refreshList();
+            },
+          ),
+          // Botón de Ajustes Manuales
+          IconButton(
+            icon: const Icon(Icons.balance, size: 28, color: Colors.orange),
+            onPressed: () async {
+              final data = await DbHelper.getAllForExport(); 
+              final itemsConDiferencia = data.where((p) {
+                double diff = (p['fisica'] ?? 0.0) - (p['existencia'] ?? 0.0);
+                return diff != 0;
+              }).toList();
 
-    if (itemsConDiferencia.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text("No hay diferencias para ajustar"))
-      );
-      return;
-    }
-
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => ManualAdjustmentsScreen(initialData: itemsConDiferencia)
-      ),
-    );
-  },
-),
-
-        
-        
+              if (itemsConDiferencia.isEmpty) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text("No hay diferencias para ajustar"))
+                );
+                return;
+              }
+              Navigator.push(context, MaterialPageRoute(builder: (_) => ManualAdjustmentsScreen(initialData: itemsConDiferencia)));
+            },
+          ),
+          // Historial, Importación y Exportación
           IconButton(
             icon: const Icon(Icons.history_edu, size: 28),
-            onPressed: () => Navigator.push(
-              context, 
-              // CORRECCIÓN: Se quitó el 'const' aquí para evitar error de compilación
-              MaterialPageRoute(builder: (_) => AuditHistoryScreen()) 
-            ).then((_) {
+            onPressed: () => Navigator.push(context, MaterialPageRoute(builder: (_) => AuditHistoryScreen())).then((_) {
               _refreshList();
               _updateCounters();
             }),
@@ -270,6 +263,7 @@ IconButton(
       body: Column(
         children: [
           if (isLoading) const LinearProgressIndicator(),
+          // Buscador de productos
           Padding(
             padding: const EdgeInsets.all(8.0),
             child: TextField(
@@ -283,13 +277,13 @@ IconButton(
                   fillColor: Colors.grey[100]),
             ),
           ),
+          // Listado principal
           Expanded(
             child: ListView.builder(
               itemCount: displayedProducts.length,
               itemBuilder: (context, i) {
                 final p = displayedProducts[i];
                 return Card(
-                // Si fisica > 0, ponemos un fondo verde muy tenue, si no, blanco.
                    color: p['fisica'] > 0 ? Colors.green[50] : Colors.white,
                   margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   child: ListTile(
@@ -313,6 +307,8 @@ IconButton(
     );
   }
 
+  // --- IMPORTAR CSV ---
+  // Permite seleccionar un archivo CSV de la memoria y cargarlo en la base de datos
   Future<void> _importCSV() async {
     FilePickerResult? result = await FilePicker.platform.pickFiles(type: FileType.custom, allowedExtensions: ['csv']);
     if (result == null) return;
