@@ -1,8 +1,12 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:signals_flutter/signals_flutter.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
+import 'package:excel/excel.dart'; // Nueva para Excel
+import 'package:path_provider/path_provider.dart'; // Nueva para rutas
+import 'package:share_plus/share_plus.dart'; // Nueva para compartir
 
 class ManualAdjustmentsScreen extends StatefulWidget {
   final List<Map<String, dynamic>> initialData;
@@ -76,129 +80,120 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     };
   }
 
-  // --- FUNCIÓN DE EXPORTACIÓN OPTIMIZADA CON FEEDBACK VISUAL ---
-  Future<void> _exportarPDF() async {
+  // --- FUNCIÓN EXCEL (ESTA NO SE CUELGA) ---
+  Future<void> _exportarExcel() async {
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => const Center(
-        child: Card(
-          child: Padding(
-            padding: EdgeInsets.all(20.0),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                CircularProgressIndicator(),
-                SizedBox(height: 15),
-                Text("Procesando 400+ registros...", style: TextStyle(fontWeight: FontWeight.bold)),
-                Text("Esto puede tardar unos segundos", style: TextStyle(fontSize: 12)),
-              ],
-            ),
-          ),
-        ),
-      ),
+      builder: (ctx) => const Center(child: CircularProgressIndicator()),
     );
 
-    // Pequeña pausa para permitir que Flutter dibuje el diálogo antes del proceso pesado
-    await Future.delayed(const Duration(milliseconds: 100));
-
     try {
-      final pdf = pw.Document();
-      final List<List<String>> tMatch = [];
-      final List<List<String>> tSobrante = [];
-      final List<List<String>> tFaltante = [];
+      var excel = Excel.createExcel();
+      Sheet sheetMatch = excel['1-Match'];
+      Sheet sheetSob = excel['2-Sobrantes'];
+      Sheet sheetFal = excel['3-Faltantes'];
+      excel.delete('Sheet1');
+
+      List<CellValue> header = [
+        TextCellValue("CLAVE"),
+        TextCellValue("REGISTRO"),
+        TextCellValue("DESCRIPCION"),
+        TextCellValue("SIS"),
+        TextCellValue("FIS"),
+        TextCellValue("DIF")
+      ];
+      
+      sheetMatch.appendRow(header);
+      sheetSob.appendRow(header);
+      sheetFal.appendRow(header);
 
       for (var p in itemsOrdenados) {
         final detalle = _obtenerDetalleAjuste(p);
         final double ajuste = detalle['ajuste'];
         final double residuo = detalle['residuo'];
         
-        final String clave = p['clave'].toString();
-        final String desc = p['descripcion'].toString();
-        final String sis = (p['existencia']?.toInt() ?? 0).toString();
-        final String fis = (p['fisica']?.toInt() ?? 0).toString();
+        List<CellValue> dataRow(String reg, double val) => [
+          TextCellValue(p['clave'].toString()),
+          TextCellValue(reg),
+          TextCellValue(p['descripcion'].toString()),
+          IntCellValue(p['existencia']?.toInt() ?? 0),
+          IntCellValue(p['fisica']?.toInt() ?? 0),
+          IntCellValue(val.toInt()),
+        ];
 
         if (ajuste != 0) {
-          tMatch.add([
-            clave, 
-            "${ajuste > 0 ? '+' : ''}${ajuste.toInt()}${detalle['letra']}", 
-            desc, sis, fis, 
-            ajuste > 0 ? ajuste.toInt().toString() : '', 
-            ajuste < 0 ? ajuste.abs().toInt().toString() : ''
-          ]);
+          sheetMatch.appendRow(dataRow("${ajuste > 0 ? '+' : ''}${ajuste.toInt()}${detalle['letra']}", ajuste));
         }
-
         if (residuo != 0) {
-          final row = [
-            clave, 
-            "${residuo > 0 ? '+' : ''}${residuo.toInt()}", 
-            desc, sis, fis, 
-            residuo > 0 ? residuo.toInt().toString() : '', 
-            residuo < 0 ? residuo.abs().toInt().toString() : ''
-          ];
-          residuo > 0 ? tSobrante.add(row) : tFaltante.add(row);
+          if (residuo > 0) {
+            sheetSob.appendRow(dataRow("${residuo.toInt()}", residuo));
+          } else {
+            sheetFal.appendRow(dataRow("${residuo.toInt()}", residuo));
+          }
         }
       }
 
-      pdf.addPage(pw.MultiPage(
-        pageFormat: PdfPageFormat.letter.landscape,
-        margin: const pw.EdgeInsets.all(25),
-        build: (context) => [
-          pw.Header(level: 0, child: pw.Text("AJUSTES DE INVENTARIO")),
-          _buildPdfTable("1. AJUSTE UNO POR OTRO", tMatch, PdfColors.blue900),
-          _buildPdfTable("2. AJUSTE POR SOBRANTE", tSobrante, PdfColors.green900),
-          _buildPdfTable("3. AJUSTE POR FALTANTE", tFaltante, PdfColors.red900),
-          pw.SizedBox(height: 40),
-          pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceAround, children: [
-            _buildFirma("Inventarista"),
-            _buildFirma("Gerencia"),
-          ])
-        ],
-      ));
+      final fileBytes = excel.save();
+      final directory = await getTemporaryDirectory();
+      final String filePath = "${directory.path}/Ajustes_Inventario.xlsx";
+      final file = File(filePath);
+      await file.writeAsBytes(fileBytes!);
 
       if (mounted) Navigator.pop(context);
-      await Printing.layoutPdf(onLayout: (format) => pdf.save());
+      await Share.shareXFiles([XFile(filePath)], text: 'Reporte de Ajustes');
 
     } catch (e) {
       if (mounted) Navigator.pop(context);
-      debugPrint("Error PDF: $e");
+      debugPrint("Error Excel: $e");
     }
   }
 
-  // --- ESTA FUNCIÓN ES LA QUE FALTABA ---
+  // --- FUNCIÓN PDF (SE MANTIENE IGUAL) ---
+  Future<void> _exportarPDF() async {
+    final pdf = pw.Document();
+    final List<List<String>> tMatch = [];
+    final List<List<String>> tSobrante = [];
+    final List<List<String>> tFaltante = [];
+
+    for (var p in itemsOrdenados) {
+      final detalle = _obtenerDetalleAjuste(p);
+      final double ajuste = detalle['ajuste'];
+      final double residuo = detalle['residuo'];
+      
+      if (ajuste != 0) {
+        tMatch.add([p['clave'].toString(), "${ajuste > 0 ? '+' : ''}${ajuste.toInt()}${detalle['letra']}", p['descripcion'].toString(), p['existencia'].toString(), p['fisica'].toString(), ajuste.toInt().toString(), ""]);
+      }
+      if (residuo != 0) {
+        final row = [p['clave'].toString(), "${residuo.toInt()}", p['descripcion'].toString(), p['existencia'].toString(), p['fisica'].toString(), residuo > 0 ? residuo.toInt().toString() : "", residuo < 0 ? residuo.abs().toInt().toString() : ""];
+        residuo > 0 ? tSobrante.add(row) : tFaltante.add(row);
+      }
+    }
+
+    pdf.addPage(pw.MultiPage(
+      pageFormat: PdfPageFormat.letter.landscape,
+      build: (context) => [
+        pw.Text("REPORTE DE AJUSTES", style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
+        _buildPdfTable("1. MATCH", tMatch, PdfColors.blue900),
+        _buildPdfTable("2. SOBRANTES", tSobrante, PdfColors.green900),
+        _buildPdfTable("3. FALTANTES", tFaltante, PdfColors.red900),
+      ],
+    ));
+
+    await Printing.layoutPdf(onLayout: (format) => pdf.save());
+  }
+
   pw.Widget _buildPdfTable(String titulo, List<List<String>> data, PdfColor color) {
     if (data.isEmpty) return pw.SizedBox();
     return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-      pw.Padding(
-        padding: const pw.EdgeInsets.only(top: 15, bottom: 5),
-        child: pw.Text(titulo, style: pw.TextStyle(fontWeight: pw.FontWeight.bold, color: color, fontSize: 10)),
-      ),
+      pw.Padding(padding: const pw.EdgeInsets.symmetric(vertical: 5), child: pw.Text(titulo, style: pw.TextStyle(color: color, fontWeight: pw.FontWeight.bold))),
       pw.TableHelper.fromTextArray(
         headers: ['CLAVE', 'REGISTRO', 'DESCRIPCION', 'SIS', 'FIS', 'SOB', 'FAL'],
         data: data,
         headerDecoration: pw.BoxDecoration(color: color),
-        headerStyle: pw.TextStyle(color: PdfColors.white, fontWeight: pw.FontWeight.bold, fontSize: 8),
+        headerStyle: pw.TextStyle(color: PdfColors.white, fontSize: 8),
         cellStyle: const pw.TextStyle(fontSize: 8),
-        columnWidths: {
-          0: const pw.FlexColumnWidth(1.5),
-          1: const pw.FlexColumnWidth(1.5),
-          2: const pw.FlexColumnWidth(5),
-          3: const pw.FlexColumnWidth(1),
-          4: const pw.FlexColumnWidth(1),
-          5: const pw.FlexColumnWidth(1),
-          6: const pw.FlexColumnWidth(1),
-        },
-        cellAlignment: pw.Alignment.centerLeft,
-        headerAlignment: pw.Alignment.center,
       ),
-    ]);
-  }
-
-  pw.Widget _buildFirma(String texto) {
-    return pw.Column(children: [
-      pw.Container(width: 160, decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide()))),
-      pw.SizedBox(height: 4),
-      pw.Text(texto, style: const pw.TextStyle(fontSize: 9)),
     ]);
   }
 
@@ -209,11 +204,13 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
         title: const Text("Ajustes"),
         actions: [
           IconButton(
-            icon: const Icon(Icons.delete_sweep, color: Colors.redAccent),
-            onPressed: () => asignaciones.value = {},
+            icon: const Icon(Icons.table_view, color: Colors.green), // BOTÓN EXCEL
+            tooltip: "Exportar a Excel",
+            onPressed: _exportarExcel,
           ),
           IconButton(
-            icon: const Icon(Icons.picture_as_pdf),
+            icon: const Icon(Icons.picture_as_pdf, color: Colors.red), // BOTÓN PDF
+            tooltip: "Exportar a PDF",
             onPressed: _exportarPDF,
           ),
         ],

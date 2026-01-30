@@ -45,6 +45,7 @@ dependencies:
   pdf: ^3.10.7
   signals_flutter: ^6.3.0
   printing: ^5.11.0
+  excel: ^4.0.0
 dev_dependencies:
   flutter_test:
     sdk: flutter
