@@ -114,7 +114,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     }
 
     // --- ORDENAMIENTO ESPECIAL TABLA 1 (MATCH) ---
-    // 1. Por Letra (A, B, C...).
+    // 1. Por Letra (A, B, C...)..
     // 2. Por Valor (Sobrantes primero que faltantes: + antes que -)
     tMatch.sort((a, b) {
       int compLetra = a['letra'].compareTo(b['letra']);
