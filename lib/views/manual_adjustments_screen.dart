@@ -4,9 +4,9 @@ import 'package:signals_flutter/signals_flutter.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'package:excel/excel.dart'; // Nueva para Excel
-import 'package:path_provider/path_provider.dart'; // Nueva para rutas
-import 'package:share_plus/share_plus.dart'; // Nueva para compartir
+import 'package:excel/excel.dart' as xl; // Solución al conflicto de Border
+import 'package:path_provider/path_provider.dart';
+import 'package:share_plus/share_plus.dart';
 
 class ManualAdjustmentsScreen extends StatefulWidget {
   final List<Map<String, dynamic>> initialData;
@@ -89,19 +89,19 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     );
 
     try {
-      var excel = Excel.createExcel();
-      Sheet sheetMatch = excel['1-Match'];
-      Sheet sheetSob = excel['2-Sobrantes'];
-      Sheet sheetFal = excel['3-Faltantes'];
+      var excel = xl.Excel.createExcel();
+      xl.Sheet sheetMatch = excel['1-Match'];
+      xl.Sheet sheetSob = excel['2-Sobrantes'];
+      xl.Sheet sheetFal = excel['3-Faltantes'];
       excel.delete('Sheet1');
 
-      List<CellValue> header = [
-        TextCellValue("CLAVE"),
-        TextCellValue("REGISTRO"),
-        TextCellValue("DESCRIPCION"),
-        TextCellValue("SIS"),
-        TextCellValue("FIS"),
-        TextCellValue("DIF")
+      List<xl.CellValue> header = [
+        xl.TextCellValue("CLAVE"),
+        xl.TextCellValue("REGISTRO"),
+        xl.TextCellValue("DESCRIPCION"),
+        xl.TextCellValue("SIS"),
+        xl.TextCellValue("FIS"),
+        xl.TextCellValue("DIF")
       ];
       
       sheetMatch.appendRow(header);
@@ -113,13 +113,13 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
         final double ajuste = detalle['ajuste'];
         final double residuo = detalle['residuo'];
         
-        List<CellValue> dataRow(String reg, double val) => [
-          TextCellValue(p['clave'].toString()),
-          TextCellValue(reg),
-          TextCellValue(p['descripcion'].toString()),
-          IntCellValue(p['existencia']?.toInt() ?? 0),
-          IntCellValue(p['fisica']?.toInt() ?? 0),
-          IntCellValue(val.toInt()),
+        List<xl.CellValue> dataRow(String reg, double val) => [
+          xl.TextCellValue(p['clave'].toString()),
+          xl.TextCellValue(reg),
+          xl.TextCellValue(p['descripcion'].toString()),
+          xl.IntCellValue(p['existencia']?.toInt() ?? 0),
+          xl.IntCellValue(p['fisica']?.toInt() ?? 0),
+          xl.IntCellValue(val.toInt()),
         ];
 
         if (ajuste != 0) {
@@ -149,7 +149,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     }
   }
 
-  // --- FUNCIÓN PDF (SE MANTIENE IGUAL) ---
+  // --- FUNCIÓN PDF (PARA AJUSTES PEQUEÑOS) ---
   Future<void> _exportarPDF() async {
     final pdf = pw.Document();
     final List<List<String>> tMatch = [];
@@ -204,13 +204,13 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
         title: const Text("Ajustes"),
         actions: [
           IconButton(
-            icon: const Icon(Icons.table_view, color: Colors.green), // BOTÓN EXCEL
-            tooltip: "Exportar a Excel",
+            icon: const Icon(Icons.table_view, color: Colors.green),
+            tooltip: "Exportar Excel",
             onPressed: _exportarExcel,
           ),
           IconButton(
-            icon: const Icon(Icons.picture_as_pdf, color: Colors.red), // BOTÓN PDF
-            tooltip: "Exportar a PDF",
+            icon: const Icon(Icons.picture_as_pdf, color: Colors.red),
+            tooltip: "Exportar PDF",
             onPressed: _exportarPDF,
           ),
         ],
@@ -249,7 +249,11 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
                   subtitle: Text("Sis: ${p['existencia'].toInt()} | Fis: ${p['fisica'].toInt()}"),
                   trailing: Container(
                     padding: const EdgeInsets.all(8),
-                    decoration: BoxDecoration(border: Border.all(color: Colors.black12), borderRadius: BorderRadius.circular(4)),
+                    // AQUÍ ESTABA EL ERROR: Border ahora se reconoce bien gracias al prefijo xl. en el import
+                    decoration: BoxDecoration(
+                      border: Border.all(color: Colors.black12), 
+                      borderRadius: BorderRadius.circular(4)
+                    ),
                     child: Text(registro['texto'], style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey)),
                   ),
                   onTap: () {
