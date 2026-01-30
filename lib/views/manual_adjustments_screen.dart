@@ -99,7 +99,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
           'sob': valorDiferencia > 0 ? valorDiferencia.toInt().toString() : '',
           'fal': valorDiferencia < 0 ? valorDiferencia.abs().toInt().toString() : '',
           'letra': letra,
-          'valor': valorDiferencia, // Para ordenamiento
+          'valor': valorDiferencia, // Para ordenamiento.
         };
       }
 
