@@ -76,14 +76,31 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     };
   }
 
-  // --- FUNCIÓN DE EXPORTACIÓN OPTIMIZADA ---
+  // --- FUNCIÓN DE EXPORTACIÓN OPTIMIZADA CON FEEDBACK VISUAL ---
   Future<void> _exportarPDF() async {
-    // 1. Mostrar carga para evitar ANR (Application Not Responding)
     showDialog(
       context: context,
       barrierDismissible: false,
-      builder: (ctx) => const Center(child: CircularProgressIndicator()),
+      builder: (ctx) => const Center(
+        child: Card(
+          child: Padding(
+            padding: EdgeInsets.all(20.0),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                CircularProgressIndicator(),
+                SizedBox(height: 15),
+                Text("Procesando 400+ registros...", style: TextStyle(fontWeight: FontWeight.bold)),
+                Text("Esto puede tardar unos segundos", style: TextStyle(fontSize: 12)),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
+
+    // Pequeña pausa para permitir que Flutter dibuje el diálogo antes del proceso pesado
+    await Future.delayed(const Duration(milliseconds: 100));
 
     try {
       final pdf = pw.Document();
@@ -91,7 +108,6 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
       final List<List<String>> tSobrante = [];
       final List<List<String>> tFaltante = [];
 
-      // 2. Pre-procesar todos los datos fuera del constructor de PDF
       for (var p in itemsOrdenados) {
         final detalle = _obtenerDetalleAjuste(p);
         final double ajuste = detalle['ajuste'];
@@ -124,15 +140,14 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
         }
       }
 
-      // 3. Construcción del PDF con datos ya limpios
       pdf.addPage(pw.MultiPage(
         pageFormat: PdfPageFormat.letter.landscape,
         margin: const pw.EdgeInsets.all(25),
         build: (context) => [
           pw.Header(level: 0, child: pw.Text("AJUSTES DE INVENTARIO")),
           _buildPdfTable("1. AJUSTE UNO POR OTRO", tMatch, PdfColors.blue900),
-          _buildPdfTable("2. AJUSTE POR SOBRANTE DE MERCANCIA", tSobrante, PdfColors.green900),
-          _buildPdfTable("3. AJUSTE POR FALTANTE DE MERCANCIA", tFaltante, PdfColors.red900),
+          _buildPdfTable("2. AJUSTE POR SOBRANTE", tSobrante, PdfColors.green900),
+          _buildPdfTable("3. AJUSTE POR FALTANTE", tFaltante, PdfColors.red900),
           pw.SizedBox(height: 40),
           pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceAround, children: [
             _buildFirma("Inventarista"),
@@ -141,7 +156,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
         ],
       ));
 
-      if (mounted) Navigator.pop(context); // Quitar círculo de carga
+      if (mounted) Navigator.pop(context);
       await Printing.layoutPdf(onLayout: (format) => pdf.save());
 
     } catch (e) {
@@ -150,6 +165,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     }
   }
 
+  // --- ESTA FUNCIÓN ES LA QUE FALTABA ---
   pw.Widget _buildPdfTable(String titulo, List<List<String>> data, PdfColor color) {
     if (data.isEmpty) return pw.SizedBox();
     return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
