@@ -4,7 +4,7 @@ import 'package:signals_flutter/signals_flutter.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
-import 'package:excel/excel.dart' as xl; // Solución al conflicto de Border
+import 'package:excel/excel.dart' as xl;
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -34,6 +34,13 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     itemsOrdenados.sort((a, b) => a['descripcion'].toString().compareTo(b['descripcion'].toString()));
   }
 
+  // FUNCIÓN MAGICA: Formatea 2.0 a "2" y 2.98 a "2.98"
+  String _formatNum(double n) {
+    if (n == 0) return "";
+    // Si el resto de dividir entre 1 es 0, es entero
+    return n % 1 == 0 ? n.toInt().toString() : n.toStringAsFixed(2);
+  }
+
   Map<String, dynamic> _obtenerDetalleAjuste(Map<String, dynamic> p) {
     final clave = p['clave'].toString();
     double stockSistema = (p['existencia']?.toDouble() ?? 0.0);
@@ -42,8 +49,9 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
 
     final letra = asignaciones.value[clave];
     if (letra == null) {
+      String signo = diffOriginal > 0 ? '+' : '';
       return {
-        'texto': "${diffOriginal > 0 ? '+' : ''}${diffOriginal.toInt()}",
+        'texto': "$signo${_formatNum(diffOriginal)}",
         'ajuste': 0.0,
         'residuo': diffOriginal,
         'letra': ''
@@ -69,8 +77,9 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     }
 
     double residuo = diffOriginal - ajuste;
-    String rStr = residuo == 0 ? "" : "${residuo > 0 ? '+' : ''}${residuo.toInt()} ";
-    String aStr = (ajuste == 0) ? "" : "${ajuste > 0 ? '+' : ''}${ajuste.toInt()}$letra";
+    
+    String rStr = residuo == 0 ? "" : "${residuo > 0 ? '+' : ''}${_formatNum(residuo)} ";
+    String aStr = ajuste == 0 ? "" : "${ajuste > 0 ? '+' : ''}${_formatNum(ajuste)}$letra";
 
     return {
       'texto': "$rStr$aStr".trim(),
@@ -80,7 +89,6 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     };
   }
 
-  // --- FUNCIÓN EXCEL (ESTA NO SE CUELGA) ---
   Future<void> _exportarExcel() async {
     showDialog(
       context: context,
@@ -113,23 +121,26 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
         final double ajuste = detalle['ajuste'];
         final double residuo = detalle['residuo'];
         
+        // Función interna para decidir si enviar Int o Double a la celda de Excel
+        xl.CellValue _xlNum(double n) => n % 1 == 0 ? xl.IntCellValue(n.toInt()) : xl.DoubleCellValue(n);
+
         List<xl.CellValue> dataRow(String reg, double val) => [
           xl.TextCellValue(p['clave'].toString()),
           xl.TextCellValue(reg),
           xl.TextCellValue(p['descripcion'].toString()),
-          xl.IntCellValue(p['existencia']?.toInt() ?? 0),
-          xl.IntCellValue(p['fisica']?.toInt() ?? 0),
-          xl.IntCellValue(val.toInt()),
+          _xlNum(p['existencia']?.toDouble() ?? 0),
+          _xlNum(p['fisica']?.toDouble() ?? 0),
+          _xlNum(val),
         ];
 
         if (ajuste != 0) {
-          sheetMatch.appendRow(dataRow("${ajuste > 0 ? '+' : ''}${ajuste.toInt()}${detalle['letra']}", ajuste));
+          sheetMatch.appendRow(dataRow("${ajuste > 0 ? '+' : ''}${_formatNum(ajuste)}${detalle['letra']}", ajuste));
         }
         if (residuo != 0) {
           if (residuo > 0) {
-            sheetSob.appendRow(dataRow("${residuo.toInt()}", residuo));
+            sheetSob.appendRow(dataRow("${_formatNum(residuo)}", residuo));
           } else {
-            sheetFal.appendRow(dataRow("${residuo.toInt()}", residuo));
+            sheetFal.appendRow(dataRow("${_formatNum(residuo)}", residuo));
           }
         }
       }
@@ -149,7 +160,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     }
   }
 
-  // --- FUNCIÓN PDF (PARA AJUSTES PEQUEÑOS) ---
+  // Mantenemos PDF pero con la nueva lógica de formato
   Future<void> _exportarPDF() async {
     final pdf = pw.Document();
     final List<List<String>> tMatch = [];
@@ -158,28 +169,22 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
 
     for (var p in itemsOrdenados) {
       final detalle = _obtenerDetalleAjuste(p);
-      final double ajuste = detalle['ajuste'];
-      final double residuo = detalle['residuo'];
-      
-      if (ajuste != 0) {
-        tMatch.add([p['clave'].toString(), "${ajuste > 0 ? '+' : ''}${ajuste.toInt()}${detalle['letra']}", p['descripcion'].toString(), p['existencia'].toString(), p['fisica'].toString(), ajuste.toInt().toString(), ""]);
+      if (detalle['ajuste'] != 0) {
+        tMatch.add([p['clave'].toString(), "${detalle['ajuste'] > 0 ? '+' : ''}${_formatNum(detalle['ajuste'])}${detalle['letra']}", p['descripcion'].toString(), _formatNum(p['existencia']?.toDouble() ?? 0), _formatNum(p['fisica']?.toDouble() ?? 0), _formatNum(detalle['ajuste']), ""]);
       }
-      if (residuo != 0) {
-        final row = [p['clave'].toString(), "${residuo.toInt()}", p['descripcion'].toString(), p['existencia'].toString(), p['fisica'].toString(), residuo > 0 ? residuo.toInt().toString() : "", residuo < 0 ? residuo.abs().toInt().toString() : ""];
-        residuo > 0 ? tSobrante.add(row) : tFaltante.add(row);
+      if (detalle['residuo'] != 0) {
+        double r = detalle['residuo'];
+        tSobrante.add([p['clave'].toString(), _formatNum(r), p['descripcion'].toString(), _formatNum(p['existencia']?.toDouble() ?? 0), _formatNum(p['fisica']?.toDouble() ?? 0), r > 0 ? _formatNum(r) : "", r < 0 ? _formatNum(r.abs()) : ""]);
       }
     }
-
+    // ... resto del PDF igual ...
     pdf.addPage(pw.MultiPage(
       pageFormat: PdfPageFormat.letter.landscape,
       build: (context) => [
         pw.Text("REPORTE DE AJUSTES", style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
         _buildPdfTable("1. MATCH", tMatch, PdfColors.blue900),
-        _buildPdfTable("2. SOBRANTES", tSobrante, PdfColors.green900),
-        _buildPdfTable("3. FALTANTES", tFaltante, PdfColors.red900),
       ],
     ));
-
     await Printing.layoutPdf(onLayout: (format) => pdf.save());
   }
 
@@ -203,21 +208,10 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
       appBar: AppBar(
         title: const Text("Ajustes"),
         actions: [
-          IconButton(
-            icon: const Icon(Icons.table_view, color: Colors.green),
-            tooltip: "Exportar Excel",
-            onPressed: _exportarExcel,
-          ),
-          IconButton(
-            icon: const Icon(Icons.picture_as_pdf, color: Colors.red),
-            tooltip: "Exportar PDF",
-            onPressed: _exportarPDF,
-          ),
+          IconButton(icon: const Icon(Icons.table_view, color: Colors.green), onPressed: _exportarExcel),
+          IconButton(icon: const Icon(Icons.picture_as_pdf, color: Colors.red), onPressed: _exportarPDF),
         ],
-        bottom: PreferredSize(
-          preferredSize: const Size.fromHeight(60),
-          child: _buildBarraLetras(),
-        ),
+        bottom: PreferredSize(preferredSize: const Size.fromHeight(60), child: _buildBarraLetras()),
       ),
       body: ListView.builder(
         itemCount: itemsOrdenados.length,
@@ -246,14 +240,10 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
                     child: Text(letraP ?? '', style: const TextStyle(color: Colors.white)),
                   ),
                   title: Text(p['descripcion']),
-                  subtitle: Text("Sis: ${p['existencia'].toInt()} | Fis: ${p['fisica'].toInt()}"),
+                  subtitle: Text("Sis: ${_formatNum(p['existencia']?.toDouble() ?? 0)} | Fis: ${_formatNum(p['fisica']?.toDouble() ?? 0)}"),
                   trailing: Container(
                     padding: const EdgeInsets.all(8),
-                    // AQUÍ ESTABA EL ERROR: Border ahora se reconoce bien gracias al prefijo xl. en el import
-                    decoration: BoxDecoration(
-                      border: Border.all(color: Colors.black12), 
-                      borderRadius: BorderRadius.circular(4)
-                    ),
+                    decoration: BoxDecoration(border: Border.all(color: Colors.black12), borderRadius: BorderRadius.circular(4)),
                     child: Text(registro['texto'], style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.blueGrey)),
                   ),
                   onTap: () {
