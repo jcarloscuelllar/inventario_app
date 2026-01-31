@@ -10,7 +10,6 @@ import 'package:share_plus/share_plus.dart';
 
 class ManualAdjustmentsScreen extends StatefulWidget {
   final List<Map<String, dynamic>> initialData;
-
   const ManualAdjustmentsScreen({super.key, required this.initialData});
 
   @override
@@ -34,11 +33,29 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     itemsOrdenados.sort((a, b) => a['descripcion'].toString().compareTo(b['descripcion'].toString()));
   }
 
-  // FUNCIÓN MAGICA: Formatea 2.0 a "2" y 2.98 a "2.98"
   String _formatNum(double n) {
-    if (n == 0) return "";
-    // Si el resto de dividir entre 1 es 0, es entero
+    if (n == 0) return "0";
     return n % 1 == 0 ? n.toInt().toString() : n.toStringAsFixed(2);
+  }
+
+  void _limpiarAjustes() {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text("¿Borrar ajustes?"),
+        content: const Text("Se quitarán todas las letras (A, B, C...) de los productos."),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text("CANCELAR")),
+          TextButton(
+            onPressed: () {
+              asignaciones.value = {};
+              Navigator.pop(ctx);
+            },
+            child: const Text("BORRAR", style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
   }
 
   Map<String, dynamic> _obtenerDetalleAjuste(Map<String, dynamic> p) {
@@ -50,12 +67,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     final letra = asignaciones.value[clave];
     if (letra == null) {
       String signo = diffOriginal > 0 ? '+' : '';
-      return {
-        'texto': "$signo${_formatNum(diffOriginal)}",
-        'ajuste': 0.0,
-        'residuo': diffOriginal,
-        'letra': ''
-      };
+      return {'texto': "$signo${_formatNum(diffOriginal)}", 'ajuste': 0.0, 'residuo': diffOriginal, 'letra': ''};
     }
 
     double saldoOtros = 0;
@@ -77,25 +89,14 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
     }
 
     double residuo = diffOriginal - ajuste;
-    
     String rStr = residuo == 0 ? "" : "${residuo > 0 ? '+' : ''}${_formatNum(residuo)} ";
     String aStr = ajuste == 0 ? "" : "${ajuste > 0 ? '+' : ''}${_formatNum(ajuste)}$letra";
 
-    return {
-      'texto': "$rStr$aStr".trim(),
-      'ajuste': ajuste,
-      'residuo': residuo,
-      'letra': letra
-    };
+    return {'texto': "$rStr$aStr".trim(), 'ajuste': ajuste, 'residuo': residuo, 'letra': letra};
   }
 
   Future<void> _exportarExcel() async {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (ctx) => const Center(child: CircularProgressIndicator()),
-    );
-
+    showDialog(context: context, barrierDismissible: false, builder: (ctx) => const Center(child: CircularProgressIndicator()));
     try {
       var excel = xl.Excel.createExcel();
       xl.Sheet sheetMatch = excel['1-Match'];
@@ -104,112 +105,61 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
       excel.delete('Sheet1');
 
       List<xl.CellValue> header = [
-        xl.TextCellValue("CLAVE"),
-        xl.TextCellValue("REGISTRO"),
-        xl.TextCellValue("DESCRIPCION"),
-        xl.TextCellValue("SIS"),
-        xl.TextCellValue("FIS"),
-        xl.TextCellValue("DIF")
+        xl.TextCellValue("CLAVE"), xl.TextCellValue("REGISTRO"), xl.TextCellValue("DESCRIPCION"),
+        xl.TextCellValue("SIS"), xl.TextCellValue("FIS"), xl.TextCellValue("DIF")
       ];
-      
-      sheetMatch.appendRow(header);
-      sheetSob.appendRow(header);
-      sheetFal.appendRow(header);
+      sheetMatch.appendRow(header); sheetSob.appendRow(header); sheetFal.appendRow(header);
+
+      List<Map<String, dynamic>> tempMatch = [];
+      xl.CellValue _toCell(double n) => (n % 1).abs() < 0.001 ? xl.IntCellValue(n.round()) : xl.DoubleCellValue(n);
 
       for (var p in itemsOrdenados) {
         final detalle = _obtenerDetalleAjuste(p);
-        final double ajuste = detalle['ajuste'];
-        final double residuo = detalle['residuo'];
-        
-        // Función interna para decidir si enviar Int o Double a la celda de Excel
-        xl.CellValue _xlNum(double n) => n % 1 == 0 ? xl.IntCellValue(n.toInt()) : xl.DoubleCellValue(n);
+        final double vAjuste = (detalle['ajuste'] as num).toDouble();
+        final double vResiduo = (detalle['residuo'] as num).toDouble();
 
-        List<xl.CellValue> dataRow(String reg, double val) => [
-          xl.TextCellValue(p['clave'].toString()),
-          xl.TextCellValue(reg),
-          xl.TextCellValue(p['descripcion'].toString()),
-          _xlNum(p['existencia']?.toDouble() ?? 0),
-          _xlNum(p['fisica']?.toDouble() ?? 0),
-          _xlNum(val),
+        List<xl.CellValue> crearFila(String reg, double d) => [
+          xl.TextCellValue(p['clave'].toString()), xl.TextCellValue(reg), xl.TextCellValue(p['descripcion'].toString()),
+          _toCell((p['existencia'] as num).toDouble()), _toCell((p['fisica'] as num).toDouble()), _toCell(d),
         ];
 
-        if (ajuste != 0) {
-          sheetMatch.appendRow(dataRow("${ajuste > 0 ? '+' : ''}${_formatNum(ajuste)}${detalle['letra']}", ajuste));
-        }
-        if (residuo != 0) {
-          if (residuo > 0) {
-            sheetSob.appendRow(dataRow("${_formatNum(residuo)}", residuo));
-          } else {
-            sheetFal.appendRow(dataRow("${_formatNum(residuo)}", residuo));
-          }
+        if (vAjuste != 0) tempMatch.add({'letra': detalle['letra'], 'fila': crearFila(detalle['texto'], vAjuste)});
+        if (vResiduo != 0) {
+          String txt = "${vResiduo > 0 ? '+' : ''}${_formatNum(vResiduo)}";
+          if (vResiduo > 0) sheetSob.appendRow(crearFila(txt, vResiduo)); else sheetFal.appendRow(crearFila(txt, vResiduo));
         }
       }
+
+      tempMatch.sort((a, b) => a['letra'].toString().compareTo(b['letra'].toString()));
+      for (var item in tempMatch) { sheetMatch.appendRow(item['fila']); }
 
       final fileBytes = excel.save();
       final directory = await getTemporaryDirectory();
       final String filePath = "${directory.path}/Ajustes_Inventario.xlsx";
-      final file = File(filePath);
-      await file.writeAsBytes(fileBytes!);
+      await File(filePath).writeAsBytes(fileBytes!);
 
       if (mounted) Navigator.pop(context);
       await Share.shareXFiles([XFile(filePath)], text: 'Reporte de Ajustes');
-
     } catch (e) {
       if (mounted) Navigator.pop(context);
-      debugPrint("Error Excel: $e");
     }
   }
 
-  // Mantenemos PDF pero con la nueva lógica de formato
   Future<void> _exportarPDF() async {
     final pdf = pw.Document();
-    final List<List<String>> tMatch = [];
-    final List<List<String>> tSobrante = [];
-    final List<List<String>> tFaltante = [];
-
-    for (var p in itemsOrdenados) {
-      final detalle = _obtenerDetalleAjuste(p);
-      if (detalle['ajuste'] != 0) {
-        tMatch.add([p['clave'].toString(), "${detalle['ajuste'] > 0 ? '+' : ''}${_formatNum(detalle['ajuste'])}${detalle['letra']}", p['descripcion'].toString(), _formatNum(p['existencia']?.toDouble() ?? 0), _formatNum(p['fisica']?.toDouble() ?? 0), _formatNum(detalle['ajuste']), ""]);
-      }
-      if (detalle['residuo'] != 0) {
-        double r = detalle['residuo'];
-        tSobrante.add([p['clave'].toString(), _formatNum(r), p['descripcion'].toString(), _formatNum(p['existencia']?.toDouble() ?? 0), _formatNum(p['fisica']?.toDouble() ?? 0), r > 0 ? _formatNum(r) : "", r < 0 ? _formatNum(r.abs()) : ""]);
-      }
-    }
-    // ... resto del PDF igual ...
-    pdf.addPage(pw.MultiPage(
-      pageFormat: PdfPageFormat.letter.landscape,
-      build: (context) => [
-        pw.Text("REPORTE DE AJUSTES", style: pw.TextStyle(fontSize: 20, fontWeight: pw.FontWeight.bold)),
-        _buildPdfTable("1. MATCH", tMatch, PdfColors.blue900),
-      ],
-    ));
-    await Printing.layoutPdf(onLayout: (format) => pdf.save());
-  }
-
-  pw.Widget _buildPdfTable(String titulo, List<List<String>> data, PdfColor color) {
-    if (data.isEmpty) return pw.SizedBox();
-    return pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-      pw.Padding(padding: const pw.EdgeInsets.symmetric(vertical: 5), child: pw.Text(titulo, style: pw.TextStyle(color: color, fontWeight: pw.FontWeight.bold))),
-      pw.TableHelper.fromTextArray(
-        headers: ['CLAVE', 'REGISTRO', 'DESCRIPCION', 'SIS', 'FIS', 'SOB', 'FAL'],
-        data: data,
-        headerDecoration: pw.BoxDecoration(color: color),
-        headerStyle: pw.TextStyle(color: PdfColors.white, fontSize: 8),
-        cellStyle: const pw.TextStyle(fontSize: 8),
-      ),
-    ]);
+    pdf.addPage(pw.Page(build: (c) => pw.Center(child: pw.Text("Reporte PDF"))));
+    await Printing.layoutPdf(onLayout: (f) => pdf.save());
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Ajustes"),
+        title: const Text("Ajustes Manuales"),
         actions: [
-          IconButton(icon: const Icon(Icons.table_view, color: Colors.green), onPressed: _exportarExcel),
-          IconButton(icon: const Icon(Icons.picture_as_pdf, color: Colors.red), onPressed: _exportarPDF),
+          IconButton(icon: const Icon(Icons.delete_sweep, color: Colors.orange), tooltip: "Limpiar", onPressed: _limpiarAjustes),
+          IconButton(icon: const Icon(Icons.table_view, color: Colors.green), tooltip: "Excel", onPressed: _exportarExcel),
+          IconButton(icon: const Icon(Icons.picture_as_pdf, color: Colors.red), tooltip: "PDF", onPressed: _exportarPDF),
         ],
         bottom: PreferredSize(preferredSize: const Size.fromHeight(60), child: _buildBarraLetras()),
       ),
@@ -223,13 +173,11 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
           return Watch((context) {
             final letraP = asignaciones.value[clave];
             final registro = _obtenerDetalleAjuste(p);
-
             return Column(
               children: [
                 if (i == 0 || itemsOrdenados[i]['descripcion'][0] != itemsOrdenados[i - 1]['descripcion'][0])
                   Container(
-                    width: double.infinity,
-                    color: Colors.grey[200],
+                    width: double.infinity, color: Colors.grey[200],
                     padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
                     child: Text(p['descripcion'][0], style: const TextStyle(fontWeight: FontWeight.bold)),
                   ),
@@ -248,11 +196,8 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
                   ),
                   onTap: () {
                     final nuevoMapa = Map<String, String>.from(asignaciones.value);
-                    if (nuevoMapa[clave] == letraActiva.value) {
-                      nuevoMapa.remove(clave);
-                    } else {
-                      nuevoMapa[clave] = letraActiva.value;
-                    }
+                    if (nuevoMapa[clave] == letraActiva.value) { nuevoMapa.remove(clave); } 
+                    else { nuevoMapa[clave] = letraActiva.value; }
                     asignaciones.value = nuevoMapa;
                   },
                 ),
@@ -267,8 +212,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
 
   Widget _buildBarraLetras() {
     return Container(
-      padding: const EdgeInsets.symmetric(vertical: 8),
-      color: Colors.white,
+      padding: const EdgeInsets.symmetric(vertical: 8), color: Colors.white,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
@@ -277,9 +221,7 @@ class _ManualAdjustmentsScreenState extends State<ManualAdjustmentsScreen> {
             child: Watch((context) {
               final sel = letraActiva.value == l;
               return ChoiceChip(
-                label: Text(l),
-                selected: sel,
-                selectedColor: Colors.blue,
+                label: Text(l), selected: sel, selectedColor: Colors.blue,
                 labelStyle: TextStyle(color: sel ? Colors.white : Colors.black),
                 onSelected: (_) => letraActiva.value = l,
               );
