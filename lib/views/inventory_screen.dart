@@ -125,7 +125,7 @@ class _InventoryScreenState extends State<InventoryScreen> {
                       Text("Clave: ${product['clave']}", style: const TextStyle(fontSize: 13)),
                       Text("Unidad: ${product['unit'] ?? product['unidad']}", style: const TextStyle(fontSize: 13)),
                       Text("Marca: ${product['marca']}", style: const TextStyle(fontSize: 13)),
-                      
+                      Text("Stock: ${product['existencia']}", style: const TextStyle(fontSize: 13)),
                       const Divider(), // MODIFICACIÓN: Línea divisoria decorativa
                       const SizedBox(height: 10),
 
